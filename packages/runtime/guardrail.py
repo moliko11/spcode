@@ -36,14 +36,13 @@ class GuardrailEngine:
             expression = arguments.get("expression")
             if not isinstance(expression, str) or not expression.strip():
                 raise GuardrailViolation("calculator requires a non-empty expression")
-        elif tool_name in {"read_file", "file_read"}:
+        elif tool_name == "file_read":
             self._validate_workspace_path(tool_name, arguments, require_content=False)
-        elif tool_name in {"write_note", "file_write"}:
+        elif tool_name == "file_write":
             self._validate_workspace_path(tool_name, arguments, require_content=True)
-            if tool_name == "file_write":
-                mode = arguments.get("mode", "overwrite")
-                if not isinstance(mode, str) or mode not in {"create", "overwrite", "append"}:
-                    raise GuardrailViolation("file_write.mode must be create, overwrite, or append")
+            mode = arguments.get("mode", "overwrite")
+            if not isinstance(mode, str) or mode not in {"create", "overwrite", "append"}:
+                raise GuardrailViolation("file_write.mode must be create, overwrite, or append")
         elif tool_name == "file_edit":
             self._validate_workspace_path(tool_name, arguments, require_content=False)
             action = arguments.get("action")
@@ -59,15 +58,11 @@ class GuardrailEngine:
                     raise GuardrailViolation("file_edit.text must be a string")
             else:
                 raise GuardrailViolation("file_edit.action must be replace_exact or insert_at_line")
-        elif tool_name in {"list_dir", "glob_search"}:
+        elif tool_name == "list_dir":
             path = arguments.get("path", ".")
             if not isinstance(path, str):
                 raise GuardrailViolation(f"{tool_name}.path must be a string")
             workspace_resolve(path)
-            if tool_name == "glob_search":
-                pattern = arguments.get("pattern")
-                if not isinstance(pattern, str) or not pattern.strip():
-                    raise GuardrailViolation("glob_search.pattern must be a non-empty string")
         elif tool_name in {"glob", "grep"}:
             base_path = arguments.get("base_path", ".")
             pattern = arguments.get("pattern")
@@ -76,14 +71,6 @@ class GuardrailEngine:
             if not isinstance(pattern, str) or not pattern.strip():
                 raise GuardrailViolation(f"{tool_name}.pattern must be a non-empty string")
             workspace_resolve(base_path)
-        elif tool_name == "shell":
-            command = arguments.get("command")
-            if not isinstance(command, str) or not command.strip():
-                raise GuardrailViolation("shell.command must be a non-empty string")
-            workdir = arguments.get("workdir", ".")
-            if not isinstance(workdir, str):
-                raise GuardrailViolation("shell.workdir must be a string")
-            workspace_resolve(workdir)
         elif tool_name == "bash":
             command = arguments.get("command")
             cwd = arguments.get("cwd", ".")
