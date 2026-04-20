@@ -82,6 +82,13 @@ class AgentRuntime:
             recall_pack = await self.memory_manager.recall(message, user_id)
             if recall_pack.injected_text:
                 recall_text = recall_pack.injected_text
+            await self.event_bus.publish(AgentEvent(
+                run_id="",
+                event_type=EventType.MEMORY_RECALLED,
+                ts=time.time(),
+                step=0,
+                payload={"items": len(recall_pack.items), "query": message[:80]},
+            ))
         state = AgentState(
             run_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -371,4 +378,11 @@ class AgentRuntime:
         )
         await self.session_store.append_message(state.session_id, "assistant", state.final_output or "")
         if self.memory_manager is not None:
-            await self.memory_manager.remember_run(state)
+            entries = await self.memory_manager.remember_run(state)
+            await self.event_bus.publish(AgentEvent(
+                run_id=state.run_id,
+                event_type=EventType.MEMORY_STORED,
+                ts=time.time(),
+                step=state.step,
+                payload={"stored": len(entries)},
+            ))

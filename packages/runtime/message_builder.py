@@ -16,7 +16,7 @@ class MessageBuilder:
         loaded_tools = state.metadata.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES)
         loaded = ", ".join(str(name) for name in loaded_tools)
         dynamic = ", ".join(DYNAMIC_TOOL_NAMES)
-        return (
+        prompt = (
             "You are an agentic coding assistant operating inside a local workspace.\n\n"
             "Current environment:\n"
             f"- Current date: {CURRENT_DATE}\n"
@@ -58,6 +58,10 @@ class MessageBuilder:
             "- Summarize results based on observations.\n"
             "- State uncertainty when evidence is incomplete.\n"
         )
+        recall_text = state.metadata.get("recall_text")
+        if recall_text:
+            prompt += "\n" + recall_text + "\n"
+        return prompt
 
     def build_initial_messages(self, state: AgentState) -> list[Any]:
         recent = state.conversation[-self.short_memory_turns :]

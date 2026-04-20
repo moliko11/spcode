@@ -67,6 +67,8 @@ class EventType(str, enum.Enum):
     RUN_FAILED = "run_failed"
     CONTEXT_SNIPPED = "context_snipped"
     MICROCOMPACT_APPLIED = "microcompact_applied"
+    MEMORY_RECALLED = "memory_recalled"
+    MEMORY_STORED = "memory_stored"
 
 
 @dataclass(slots=True)
