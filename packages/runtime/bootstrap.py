@@ -22,12 +22,15 @@ from packages.tools import (
 
 from .agent_loop import AgentRuntime
 from .budget import BudgetController, IdempotencyStore, RetryPolicy
+from packages.memory.manager import MemoryManager
+from packages.memory.store import FileMemoryStore
 from .config import (
     API_KEY,
     CHECKPOINT_DIR,
     MAX_SECONDS,
     MAX_STEPS,
     MAX_TOOL_CALLS,
+    MEMORY_USERS_DIR,
     MODEL_NAME,
     MODEL_URL,
     SESSION_DIR,
@@ -392,7 +395,7 @@ def build_runtime() -> AgentRuntime:
         idempotency_store=idempotency_store,
         event_bus=event_bus,
     )
-    return AgentRuntime(
+    runtime = AgentRuntime(
         llm_client=NativeToolCallingLLMClient(llm=llm, model_name=MODEL_NAME),
         message_builder=MessageBuilder(short_memory_turns=SHORT_MEMORY_TURNS),
         tool_executor=tool_executor,
@@ -408,3 +411,5 @@ def build_runtime() -> AgentRuntime:
         ),
         idempotency_store=idempotency_store,
     )
+    runtime.memory_manager = MemoryManager(store=FileMemoryStore(MEMORY_USERS_DIR))
+    return runtime

@@ -10,7 +10,7 @@ def test_build_runtime_smoke() -> None:
     assert runtime.registry.get_spec("tool_search").name == "tool_search"
     assert runtime.registry.get_spec("file_read").name == "file_read"
     assert runtime.session_store is not None
-    assert runtime.memory_manager is None
+    assert runtime.memory_manager is not None
 
 
 def test_session_store_empty_load() -> None:

@@ -75,6 +75,11 @@ class AgentRuntime:
         self.guardrail_engine.validate_user_input(message)
         previous = await self.session_store.load_messages(session_id)
         await self.session_store.append_message(session_id, "user", message)
+        recall_text: str | None = None
+        if self.memory_manager is not None:
+            recall_pack = await self.memory_manager.recall(message, user_id)
+            if recall_pack.injected_text:
+                recall_text = recall_pack.injected_text
         state = AgentState(
             run_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -83,7 +88,7 @@ class AgentRuntime:
             status=RunStatus.RUNNING,
             phase=Phase.DECIDING,
             conversation=previous + [SessionMessage(role="user", content=message)],
-            metadata={"tool_ledger": {}, "loaded_tools": list(DEFAULT_LOADED_TOOL_NAMES)},
+            metadata={"tool_ledger": {}, "loaded_tools": list(DEFAULT_LOADED_TOOL_NAMES), "recall_text": recall_text},
         )
         state.runtime_messages = [serialize_message(m) for m in self.message_builder.build_initial_messages(state)]
         await self.event_bus.publish(
@@ -347,3 +352,5 @@ class AgentRuntime:
             )
         )
         await self.session_store.append_message(state.session_id, "assistant", state.final_output or "")
+        if self.memory_manager is not None:
+            await self.memory_manager.remember_run(state)
