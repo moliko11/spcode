@@ -65,6 +65,8 @@ class EventType(str, enum.Enum):
     RUN_COMPLETED = "run_completed"
     RUN_DEGRADED = "run_degraded"
     RUN_FAILED = "run_failed"
+    CONTEXT_SNIPPED = "context_snipped"
+    MICROCOMPACT_APPLIED = "microcompact_applied"
 
 
 @dataclass(slots=True)

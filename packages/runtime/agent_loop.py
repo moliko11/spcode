@@ -33,6 +33,7 @@ from .models import (
     serialize_message,
     to_jsonable,
 )
+from packages.memory.compaction import CompactionPipeline
 from .registry import ToolRegistry
 from .store import FileCheckpointStore, FileSessionStore
 
@@ -63,6 +64,7 @@ class AgentRuntime:
         self.budget_controller = budget_controller
         self.idempotency_store = idempotency_store
         self.memory_manager = None
+        self.compaction_pipeline = CompactionPipeline()
 
     def set_failpoint(self, name: str | None) -> None:
         self.failpoint = name
@@ -189,6 +191,22 @@ class AgentRuntime:
             runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
 
             if state.phase == Phase.DECIDING:
+                # Phase B: compaction before model call
+                _stats_before = state.metadata.get("compaction_stats", {})
+                self.compaction_pipeline.prepare(state)
+                _stats_after = state.metadata.get("compaction_stats", {})
+                if _stats_after.get("snip_deleted_tokens", 0) > _stats_before.get("snip_deleted_tokens", 0):
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.CONTEXT_SNIPPED, ts=time.time(), step=state.step,
+                        payload={"deleted_tokens": _stats_after["snip_deleted_tokens"] - _stats_before.get("snip_deleted_tokens", 0)},
+                    ))
+                if _stats_after.get("micro_deleted_tokens", 0) > _stats_before.get("micro_deleted_tokens", 0):
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.MICROCOMPACT_APPLIED, ts=time.time(), step=state.step,
+                        payload={"saved_tokens": _stats_after["micro_deleted_tokens"] - _stats_before.get("micro_deleted_tokens", 0)},
+                    ))
+                # rebuild runtime_messages after compaction
+                runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
                 await self.event_bus.publish(AgentEvent(run_id=state.run_id, event_type=EventType.STEP_STARTED, ts=time.time(), step=state.step))
                 response = await self.llm_client.invoke(runtime_messages, tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)))
                 content, tool_calls = self.llm_client.extract_content_and_tool_calls(response)
