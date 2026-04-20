@@ -69,6 +69,7 @@ class EventType(str, enum.Enum):
     MICROCOMPACT_APPLIED = "microcompact_applied"
     MEMORY_RECALLED = "memory_recalled"
     MEMORY_STORED = "memory_stored"
+    AUTOCOMPACT_APPLIED = "autocompact_applied"
 
 
 @dataclass(slots=True)

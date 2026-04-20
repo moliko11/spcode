@@ -4,6 +4,7 @@ from .compaction import CompactionPipeline, CompactionStats, ContextProjector
 from .manager import MemoryManager
 from .models import CompactionRecord, MemoryEntry, MemoryType, RecallPack
 from .store import FileMemoryStore
+from .summarizer import TranscriptSummarizer
 
 __all__ = [
     "CompactionPipeline",
@@ -15,4 +16,5 @@ __all__ = [
     "RecallPack",
     "CompactionRecord",
     "FileMemoryStore",
+    "TranscriptSummarizer",
 ]

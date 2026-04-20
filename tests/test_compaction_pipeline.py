@@ -5,6 +5,7 @@ Phase B: 压缩流水线单元测试。
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from copy import deepcopy
 
@@ -236,7 +237,7 @@ def test_pipeline_prepare_writes_stats() -> None:
     msgs = [_system()] + _make_tool_rounds(SNIP_TOOL_ROUNDS + 2, content_size=600)
     state = _make_state(msgs)
     pipeline = CompactionPipeline()
-    pipeline.prepare(state)
+    asyncio.run(pipeline.prepare(state))
 
     stats = state.metadata.get("compaction_stats")
     assert stats is not None
@@ -249,8 +250,8 @@ def test_pipeline_idempotent_when_small() -> None:
     msgs = [_system(), _human("task"), _ai_text("ok")]
     state = _make_state(msgs)
     pipeline = CompactionPipeline()
-    pipeline.prepare(state)
-    pipeline.prepare(state)
+    asyncio.run(pipeline.prepare(state))
+    asyncio.run(pipeline.prepare(state))
     assert len(state.runtime_messages) == 3
 
 

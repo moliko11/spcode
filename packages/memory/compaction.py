@@ -12,11 +12,14 @@ Level 4 autocompact 在 Phase D 实现。
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from packages.memory.summarizer import TranscriptSummarizer
     from packages.runtime.models import AgentState
 
 # ── 可调常数 ──────────────────────────────────────────────────────────────────
@@ -33,6 +36,11 @@ MICRO_CONTENT_THRESHOLD: int = 400
 
 # context projector 的默认 token 预算
 PROJECTOR_BUDGET_TOKENS: int = 8_000
+
+# autocompact: 总 token 数超过此值时触发 Level 4
+AUTOCOMPACT_THRESHOLD: int = 50_000
+# autocompact: 压实后保留最近 N 个工具轮次
+AUTOCOMPACT_KEEP_ROUNDS: int = 4
 
 
 # ── token 估算 ────────────────────────────────────────────────────────────────
@@ -194,6 +202,65 @@ def microcompact(state: "AgentState") -> int:
     return saved_tokens
 
 
+# ── Level 4: autocompact ─────────────────────────────────────────────────────
+
+async def autocompact(
+    state: "AgentState",
+    summarizer: "TranscriptSummarizer",
+    archive_dir: Path | None = None,
+) -> int:
+    """
+    Level 4：总 token 数超过 AUTOCOMPACT_THRESHOLD 时触发。
+    将旧消息归档到 JSONL 文件（若 archive_dir 不为 None），并用 LLM 生成的摘要
+    单条 system 消息替换，保留最近 AUTOCOMPACT_KEEP_ROUNDS 个完整工具轮次。
+    返回估算节省的 token 数。
+    """
+    messages = state.runtime_messages
+    if estimate_messages_tokens(messages) <= AUTOCOMPACT_THRESHOLD:
+        return 0
+
+    system_msgs = [m for m in messages if m.get("type") == "system"]
+    non_system = [m for m in messages if m.get("type") != "system"]
+
+    rounds = _find_tool_rounds(non_system)
+    keep_count = min(AUTOCOMPACT_KEEP_ROUNDS, len(rounds))
+
+    if keep_count > 0:
+        keep_start_idx = rounds[-keep_count][0]
+        to_archive = non_system[:keep_start_idx]
+        to_keep = non_system[keep_start_idx:]
+    else:
+        # フォールバック：工具轮次为零，保留末尾 4 条
+        cut = max(0, len(non_system) - 4)
+        to_archive = non_system[:cut]
+        to_keep = non_system[cut:]
+
+    if not to_archive:
+        return 0
+
+    # 归档到文件
+    if archive_dir is not None:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        fname = archive_dir / f"{state.run_id}_{ts}.jsonl"
+        with fname.open("w", encoding="utf-8") as fh:
+            for msg in to_archive:
+                fh.write(json.dumps(msg, ensure_ascii=False) + "\n")
+
+    # LLM 摘要
+    summary_text = await summarizer.summarize(to_archive, task=state.task)
+    summary_msg: dict[str, Any] = {
+        "type": "system",
+        "content": f"[Autocompacted history — step {state.step}]:\n{summary_text}",
+    }
+
+    archived_tokens = estimate_messages_tokens(to_archive)
+    summary_tokens = estimate_message_tokens(summary_msg)
+    saved = max(0, archived_tokens - summary_tokens)
+    state.runtime_messages = system_msgs + [summary_msg] + to_keep
+    return saved
+
+
 # ── Level 3: ContextProjector（读时投影，不修改 state）────────────────────────
 
 class ContextProjector:
@@ -245,21 +312,33 @@ class CompactionPipeline:
     """
     统一压缩入口。每次模型调用前调用 prepare()。
 
-    Phase B 实现：
-    - Level 1 snip：删除超限旧工具轮次对
-    - Level 2 microcompact：压缩旧工具结果的内容
-    - Level 3 由 project() 方法提供只读投影
-
-    Phase D 将在此处加入 Level 4 autocompact。
+    Level 1 snip：删除超限旧工具轮次对
+    Level 2 microcompact：压缩旧工具结果的内容
+    Level 3 由 project() 方法提供只读投影
+    Level 4 autocompact：LLM 摘要替换旧消息（Phase D，需提供 summarizer）
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        summarizer: "TranscriptSummarizer | None" = None,
+        archive_dir: "Path | None" = None,
+    ) -> None:
         self.projector = ContextProjector()
+        self.summarizer = summarizer
+        self.archive_dir: Path | None = archive_dir
 
-    def prepare(self, state: "AgentState") -> None:
+    async def prepare(self, state: "AgentState") -> None:
         """模型调用前执行，in-place 修改 state.runtime_messages。"""
         stats = _get_stats(state)
         stats.message_count_before = len(state.runtime_messages)
+
+        # Level 4: autocompact（优先于 snip/micro，仅在超预算时触发）
+        if self.summarizer is not None:
+            auto_saved = await autocompact(state, self.summarizer, self.archive_dir)
+            if auto_saved > 0:
+                stats.auto_deleted_tokens += auto_saved
+                stats.last_compaction_level = "auto"
+                stats.last_compaction_at = time.time()
 
         # Level 1: snip
         snip_deleted = snip_compact(state)

@@ -200,8 +200,13 @@ class AgentRuntime:
             if state.phase == Phase.DECIDING:
                 # Phase B: compaction before model call
                 _stats_before = state.metadata.get("compaction_stats", {})
-                self.compaction_pipeline.prepare(state)
+                await self.compaction_pipeline.prepare(state)
                 _stats_after = state.metadata.get("compaction_stats", {})
+                if _stats_after.get("auto_deleted_tokens", 0) > _stats_before.get("auto_deleted_tokens", 0):
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.AUTOCOMPACT_APPLIED, ts=time.time(), step=state.step,
+                        payload={"saved_tokens": _stats_after["auto_deleted_tokens"] - _stats_before.get("auto_deleted_tokens", 0)},
+                    ))
                 if _stats_after.get("snip_deleted_tokens", 0) > _stats_before.get("snip_deleted_tokens", 0):
                     await self.event_bus.publish(AgentEvent(
                         run_id=state.run_id, event_type=EventType.CONTEXT_SNIPPED, ts=time.time(), step=state.step,

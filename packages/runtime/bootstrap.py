@@ -24,12 +24,15 @@ from .agent_loop import AgentRuntime
 from .budget import BudgetController, IdempotencyStore, RetryPolicy
 from packages.memory.manager import MemoryManager
 from packages.memory.store import FileMemoryStore
+from packages.memory.summarizer import TranscriptSummarizer
+from packages.memory.compaction import CompactionPipeline
 from .config import (
     API_KEY,
     CHECKPOINT_DIR,
     MAX_SECONDS,
     MAX_STEPS,
     MAX_TOOL_CALLS,
+    MEMORY_TRANSCRIPTS_DIR,
     MEMORY_USERS_DIR,
     MODEL_NAME,
     MODEL_URL,
@@ -414,5 +417,9 @@ def build_runtime() -> AgentRuntime:
     runtime.memory_manager = MemoryManager(
         store=FileMemoryStore(MEMORY_USERS_DIR),
         workspace_id=str(WORKSPACE_DIR.resolve()),
+    )
+    runtime.compaction_pipeline = CompactionPipeline(
+        summarizer=TranscriptSummarizer(llm=llm),
+        archive_dir=MEMORY_TRANSCRIPTS_DIR,
     )
     return runtime
