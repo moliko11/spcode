@@ -24,6 +24,7 @@ class MemoryEntry:
     created_at: float
     session_id: str | None = None
     run_id: str | None = None
+    workspace_id: str | None = None  # 绝对路径 str，None 表示跨项目通用记忆
     last_accessed: float | None = None
     access_count: int = 0
     source: str = "run_summary"  # run_summary / user_feedback / tool_observation

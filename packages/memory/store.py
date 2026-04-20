@@ -31,6 +31,7 @@ def _entry_to_dict(entry: MemoryEntry) -> dict[str, Any]:
         "created_at": entry.created_at,
         "session_id": entry.session_id,
         "run_id": entry.run_id,
+        "workspace_id": entry.workspace_id,
         "last_accessed": entry.last_accessed,
         "access_count": entry.access_count,
         "source": entry.source,
@@ -50,6 +51,7 @@ def _dict_to_entry(data: dict[str, Any]) -> MemoryEntry:
         created_at=float(data["created_at"]),
         session_id=data.get("session_id"),
         run_id=data.get("run_id"),
+        workspace_id=data.get("workspace_id"),
         last_accessed=data.get("last_accessed"),
         access_count=int(data.get("access_count", 0)),
         source=data.get("source", "run_summary"),
@@ -75,12 +77,19 @@ class FileMemoryStore:
         with self._path(entry.user_id).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(_entry_to_dict(entry), ensure_ascii=False) + "\n")
 
-    async def list_recent(self, user_id: str, limit: int = 10) -> list[MemoryEntry]:
+    async def list_recent(
+        self,
+        user_id: str,
+        limit: int = 10,
+        workspace_id: str | None = None,
+    ) -> list[MemoryEntry]:
         path = self._path(user_id)
         if not path.exists():
             return []
         lines = path.read_text(encoding="utf-8").splitlines()
         entries = [_dict_to_entry(json.loads(line)) for line in lines if line.strip()]
+        if workspace_id is not None:
+            entries = [e for e in entries if e.workspace_id is None or e.workspace_id == workspace_id]
         entries.sort(key=lambda e: e.created_at, reverse=True)
         return entries[:limit]
 
@@ -90,6 +99,7 @@ class FileMemoryStore:
         user_id: str,
         limit: int = 5,
         memory_types: list[MemoryType] | None = None,
+        workspace_id: str | None = None,
     ) -> list[MemoryEntry]:
         """
         v1 关键词检索：对 content/summary/tags 做简单字符串匹配，按 importance 排序。
@@ -112,6 +122,8 @@ class FileMemoryStore:
             return hit_count + entry.importance + type_bonus + access_bonus
 
         candidates = all_entries
+        if workspace_id is not None:
+            candidates = [e for e in candidates if e.workspace_id is None or e.workspace_id == workspace_id]
         if memory_types:
             candidates = [e for e in candidates if e.memory_type in memory_types]
 

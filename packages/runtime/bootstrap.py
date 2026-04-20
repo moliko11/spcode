@@ -411,5 +411,8 @@ def build_runtime() -> AgentRuntime:
         ),
         idempotency_store=idempotency_store,
     )
-    runtime.memory_manager = MemoryManager(store=FileMemoryStore(MEMORY_USERS_DIR))
+    runtime.memory_manager = MemoryManager(
+        store=FileMemoryStore(MEMORY_USERS_DIR),
+        workspace_id=str(WORKSPACE_DIR.resolve()),
+    )
     return runtime

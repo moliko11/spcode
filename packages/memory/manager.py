@@ -17,8 +17,9 @@ class MemoryManager:
     v1：基于 FileMemoryStore 的规则提取 + 关键词检索，无 LLM 参与。
     """
 
-    def __init__(self, store: FileMemoryStore) -> None:
+    def __init__(self, store: FileMemoryStore, workspace_id: str | None = None) -> None:
         self.store = store
+        self.workspace_id = workspace_id  # 当前项目的绝对路径，用于隔离多项目记忆
 
     # ------------------------------------------------------------------
     # 写入侧
@@ -38,6 +39,7 @@ class MemoryManager:
             user_id=state.user_id,
             session_id=state.session_id,
             run_id=state.run_id,
+            workspace_id=self.workspace_id,
             memory_type=MemoryType.EPISODE,
             content=episode_content,
             summary=f"[{state.status.value}] {state.task[:80]}",
@@ -55,7 +57,7 @@ class MemoryManager:
         entries.append(episode)
 
         # 2. Semantic 记忆：从 changed_files / tool_results 中提炼项目结构知识
-        semantic_entries = _extract_semantic_entries(state)
+        semantic_entries = _extract_semantic_entries(state, workspace_id=self.workspace_id)
         for sem in semantic_entries:
             await self.store.save(sem)
         entries.extend(semantic_entries)
@@ -67,6 +69,7 @@ class MemoryManager:
         entry = MemoryEntry(
             memory_id=str(uuid.uuid4()),
             user_id=user_id,
+            workspace_id=self.workspace_id,
             memory_type=MemoryType.SEMANTIC,
             content=f"{key}: {value}",
             summary=f"{key}: {value[:60]}",
@@ -85,7 +88,7 @@ class MemoryManager:
         """
         检索与当前任务最相关的记忆，返回 RecallPack（含可直接注入的文本）。
         """
-        items = await self.store.search(query, user_id, limit=limit)
+        items = await self.store.search(query, user_id, limit=limit, workspace_id=self.workspace_id)
         injected_text = _format_recall_text(items)
         pack = RecallPack(
             query=query,
@@ -98,7 +101,7 @@ class MemoryManager:
         return pack
 
     async def list_recent(self, user_id: str, limit: int = 10) -> list[MemoryEntry]:
-        return await self.store.list_recent(user_id, limit=limit)
+        return await self.store.list_recent(user_id, limit=limit, workspace_id=self.workspace_id)
 
     async def forget(self, memory_id: str, user_id: str) -> None:
         await self.store.delete(memory_id, user_id)
@@ -155,7 +158,7 @@ def _extract_changed_files(state: "AgentState") -> list[str]:
     return list(dict.fromkeys(files))  # 去重保序
 
 
-def _extract_semantic_entries(state: "AgentState") -> list[MemoryEntry]:
+def _extract_semantic_entries(state: "AgentState", workspace_id: str | None = None) -> list[MemoryEntry]:
     """
     从工具结果中提炼项目结构相关的语义记忆。
     v1：只针对 file_write / file_edit 产生的文件路径生成 semantic 条目。
@@ -175,6 +178,7 @@ def _extract_semantic_entries(state: "AgentState") -> list[MemoryEntry]:
                 user_id=state.user_id,
                 session_id=state.session_id,
                 run_id=state.run_id,
+                workspace_id=workspace_id,
                 memory_type=MemoryType.SEMANTIC,
                 content=f"File modified: {norm}",
                 summary=f"Modified {norm}",
