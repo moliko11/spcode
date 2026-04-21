@@ -138,6 +138,77 @@ async def run_approve(args: argparse.Namespace) -> None:
     print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
 
 
+async def run_resume(args: argparse.Namespace) -> None:
+    """跨进程恢复一个未完成的 plan_run（崩溃恢复 或 waiting_human 恢复）。"""
+    configure_provider(args)
+    # 先仅加载 plan_run 检查状态，不需要启动完整 runtime
+    plan_run_store = PlanRunStore(PLAN_RUNS_DIR)
+    plan_run = plan_run_store.load(args.plan_run_id)
+    if plan_run is None:
+        print(f"plan_run not found: {args.plan_run_id}")
+        return
+
+    if plan_run.status in ("completed", "failed"):
+        print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+        print(f"\nplan_run already {plan_run.status}, nothing to resume")
+        return
+
+    runtime = build_runtime()
+    llm = build_llm()
+    planner = Planner(llm=llm)
+    plan_store = PlanStore(PLANS_DIR)
+    orchestrator = Orchestrator(
+        runtime=runtime,
+        planner=planner,
+        plan_store=plan_store,
+        plan_run_store=plan_run_store,
+        user_id=args.user_id,
+        session_id=plan_run.session_id,  # 恢复原 session 前缀
+    )
+
+    if plan_run.status == "waiting_human":
+        pending = _find_waiting_step(plan_run)
+        if pending is not None:
+            approved, edited_arguments, approved_by = _prompt_approval_action(
+                pending.pending_human_request or {}
+            )
+            plan_run = await orchestrator.resume(
+                plan_run_id=args.plan_run_id,
+                approved=approved,
+                approved_by=approved_by,
+                edited_arguments=edited_arguments,
+            )
+        else:
+            # 状态不一致，直接恢复执行
+            plan_run = await orchestrator.recover(args.plan_run_id)
+    else:
+        # status == "running"（进程崩溃），重置崩溃步骤后继续
+        plan_run = await orchestrator.recover(args.plan_run_id)
+
+    print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+    print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
+
+    # 继续处理后续可能出现的审批请求
+    while True:
+        pending = _find_waiting_step(plan_run)
+        if pending is None:
+            break
+        print("approval_required=true")
+        approved, edited_arguments, approved_by = _prompt_approval_action(
+            pending.pending_human_request or {}
+        )
+        plan_run = await orchestrator.resume(
+            plan_run_id=plan_run.plan_run_id,
+            approved=approved,
+            approved_by=approved_by,
+            edited_arguments=edited_arguments,
+        )
+        print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+        print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
+        if not approved:
+            break
+
+
 async def run_show_session(args: argparse.Namespace) -> None:
     configure_provider(args)
     runtime = build_runtime()
@@ -193,6 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     approve_parser.add_argument("--edited-arguments", default="", help="Optional JSON object to override pending tool arguments")
     approve_parser.add_argument("--reject", action="store_true", help="Reject the pending approval instead of approving it")
 
+    resume_parser = subparsers.add_parser("resume", help="Resume an interrupted plan run from persistent storage (cross-process recovery)")
+    resume_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="openai_compatible")
+    resume_parser.add_argument("plan_run_id", help="ID of the plan run to resume")
+    resume_parser.add_argument("--user-id", default="demo-user")
+
     show_session_parser = subparsers.add_parser("show-session", help="Print persisted session messages")
     show_session_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     show_session_parser.add_argument("--session-id", default="demo-session")
@@ -216,6 +292,7 @@ def main() -> None:
         "chat": run_chat,
         "orchestrate": run_orchestrate,
         "approve": run_approve,
+        "resume": run_resume,
         "show-session": run_show_session,
         "show-memory": run_show_memory,
         "plan": run_plan,

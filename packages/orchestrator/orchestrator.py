@@ -133,6 +133,46 @@ class Orchestrator:
         self._persist(plan, plan_run)
         return await self._execute_waves(plan, plan_run)
 
+    async def recover(self, plan_run_id: str) -> PlanRun:
+        """
+        跨进程恢复：从持久化存储加载未完成的 PlanRun，重置崩溃中的 RUNNING 步骤，
+        继续 wave-based 执行。适用于进程被强制终止后重新启动的场景。
+        """
+        plan_run = self._plan_run_store.load(plan_run_id)
+        if plan_run is None:
+            raise ValueError(f"plan_run not found: {plan_run_id}")
+        plan = self._plan_store.load(plan_run.plan_id)
+        if plan is None:
+            raise ValueError(f"plan not found: {plan_run.plan_id}")
+
+        if plan_run.status in ("completed", "failed"):
+            return self._finalize_plan_run(plan_run)
+
+        # 恢复 session 前缀，确保步骤 session ID 与原来一致
+        self._session_prefix = plan_run.session_id
+
+        # 将崩溃中（RUNNING）的步骤重置为 PENDING，让调度器重新调度
+        crashed_step_ids = {
+            s.step_id for s in plan.steps if s.status == StepStatus.RUNNING
+        }
+        for step in plan.steps:
+            if step.step_id in crashed_step_ids:
+                step.status = StepStatus.PENDING
+        # 移除对应的不完整 step_runs，wave 循环会重新创建它们
+        plan_run.step_runs = [
+            r for r in plan_run.step_runs if r.step_id not in crashed_step_ids
+        ]
+
+        plan_run.status = "running"
+        plan_run.pending_step_id = None
+        plan.status = PlanStatus.RUNNING
+        self._persist(plan, plan_run)
+        logger.info(
+            "Orchestrator recover plan_run_id=%s crashed_steps=%s",
+            plan_run_id, list(crashed_step_ids),
+        )
+        return await self._execute_waves(plan, plan_run)
+
     # ------------------------------------------------------------------
     # Wave-based 并行执行核心
     # ------------------------------------------------------------------
