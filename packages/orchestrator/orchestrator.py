@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -7,6 +8,7 @@ from typing import Any
 
 from packages.planner.models import PlanStatus, StepStatus, TaskPlan, TaskStep
 from packages.planner.planner import Planner
+from packages.planner.scheduler import Scheduler
 from packages.planner.store import PlanStore
 from packages.runtime.agent_loop import AgentRuntime
 
@@ -19,11 +21,13 @@ logger = logging.getLogger(__name__)
 
 class Orchestrator:
     """
-    W2 顺序执行器：
-    1. 接收 goal → 调用 Planner 生成 TaskPlan
-    2. 按 step 顺序（尊重 dependencies）串行调用 StepExecutor
-    3. 任一 step 失败则停止，记录原因
-    4. 返回 PlanRun 执行记录
+    W4 Wave-based 并行执行器：
+    1. 接收 goal → 调用 Planner 生成 TaskPlan（带 dependencies DAG）
+    2. 每一轮（wave）用 Scheduler 找出所有依赖已满足的就绪步骤
+    3. 用 asyncio.gather() 并行执行同一波的所有步骤
+       - 每步使用独立 session，避免上下文竞争
+    4. 循环直到所有步骤完成/失败/跳过
+    5. 支持 WAITING_HUMAN → resume() 恢复继续下一 wave
     """
 
     def __init__(
@@ -40,26 +44,29 @@ class Orchestrator:
         self._plan_store = plan_store
         self._plan_run_store = plan_run_store
         self._user_id = user_id
-        # 每次 orchestration 用独立 session，避免跨任务上下文污染
-        self._session_id = session_id or f"orchestrate-{uuid.uuid4()}"
+        self._scheduler = Scheduler()
+        # plan_run 级别的 session 前缀；每个 step 用 {prefix}-{step_id} 独立隔离
+        self._session_prefix = session_id or f"orchestrate-{uuid.uuid4()}"
 
     async def run(self, goal: str, context: str = "") -> PlanRun:
-        """生成计划并串行执行所有步骤，返回 PlanRun。"""
+        """生成计划并以 wave 方式并行执行所有步骤，返回 PlanRun。"""
         plan = await self._planner.create_plan(goal, context=context)
         plan.status = PlanStatus.RUNNING
-        plan.metadata["execution_order"] = [step.step_id for step in self._execution_order(plan)]
         self._plan_store.save(plan)
-        logger.info("Orchestrator plan_id=%s steps=%d", plan.plan_id, len(plan.steps))
+        logger.info(
+            "Orchestrator plan_id=%s steps=%d goal=%r",
+            plan.plan_id, len(plan.steps), goal,
+        )
 
         plan_run = PlanRun(
             plan_id=plan.plan_id,
             goal=goal,
             status="running",
-            session_id=self._session_id,
+            session_id=self._session_prefix,
             started_at=time.time(),
         )
         self._persist(plan, plan_run)
-        return await self._execute_from_index(plan, plan_run, start_index=0)
+        return await self._execute_waves(plan, plan_run)
 
     async def resume(
         self,
@@ -78,16 +85,23 @@ class Orchestrator:
         if plan_run.status != "waiting_human" or plan_run.pending_step_id is None:
             raise ValueError("plan_run is not waiting for human approval")
 
-        ordered_steps = self._ordered_steps(plan)
-        step = ordered_steps[plan_run.current_step_index]
+        # 通过 pending_step_id 直接定位等待步骤（支持并行执行场景）
+        step = next(
+            (s for s in plan.steps if s.step_id == plan_run.pending_step_id), None
+        )
+        if step is None:
+            raise ValueError(f"step not found: {plan_run.pending_step_id}")
         step_run = self._find_step_run(plan_run, step.step_id)
         if step_run is None:
             raise ValueError(f"step_run not found for step: {step.step_id}")
 
+        # 使用步骤记录的 session_id（并行时每步独立），兜底用 plan_run.session_id
+        step_session_id = step_run.step_session_id or plan_run.session_id
+
         executor = StepExecutor(
             runtime=self._runtime,
             user_id=self._user_id,
-            session_id=plan_run.session_id,
+            session_id=step_session_id,
         )
         await executor.resume(
             step_run=step_run,
@@ -96,12 +110,15 @@ class Orchestrator:
             edited_arguments=edited_arguments,
         )
         self._sync_step_from_run(step, step_run)
+
         if step_run.status == StepRunStatus.WAITING_HUMAN:
+            # 同一步骤内又遇到新的审批请求
             plan.status = PlanStatus.WAITING_HUMAN
             plan_run.status = "waiting_human"
             plan_run.pending_step_id = step.step_id
             self._persist(plan, plan_run)
             return self._finalize_plan_run(plan_run)
+
         if step_run.status == StepRunStatus.FAILED:
             plan.status = PlanStatus.FAILED
             plan_run.status = "failed"
@@ -109,112 +126,135 @@ class Orchestrator:
             self._persist(plan, plan_run)
             return self._finalize_plan_run(plan_run)
 
-        plan_run.current_step_index += 1
+        # 步骤已完成，继续下一 wave
         plan_run.pending_step_id = None
         plan_run.status = "running"
         plan.status = PlanStatus.RUNNING
         self._persist(plan, plan_run)
-        return await self._execute_from_index(plan, plan_run, start_index=plan_run.current_step_index)
+        return await self._execute_waves(plan, plan_run)
 
     # ------------------------------------------------------------------
+    # Wave-based 并行执行核心
+    # ------------------------------------------------------------------
 
-    def _execution_order(self, plan: TaskPlan) -> list[TaskStep]:
+    async def _execute_waves(self, plan: TaskPlan, plan_run: PlanRun) -> PlanRun:
         """
-        简单拓扑排序：按 step 在列表中的原始顺序输出，
-        保证依赖在前（W2 阶段 LLM 输出的步骤本身就是有序的，此处仅做基础校验）。
+        Wave-based 并行执行循环：
+        每轮找出所有依赖已满足的 PENDING 步骤，用 asyncio.gather() 并行运行，
+        直到没有更多就绪步骤为止。
         """
-        step_map = {s.step_id: s for s in plan.steps}
-        visited: set[str] = set()
-        result: list[TaskStep] = []
+        wave_index = 0
 
-        def visit(step_id: str) -> None:
-            if step_id in visited:
-                return
-            visited.add(step_id)
-            step = step_map.get(step_id)
-            if step is None:
-                return
-            for dep in step.dependencies:
-                visit(dep)
-            result.append(step)
+        while True:
+            completed_ids = {
+                s.step_id for s in plan.steps if s.status == StepStatus.COMPLETED
+            }
+            has_failed = any(
+                s.status == StepStatus.FAILED for s in plan.steps
+            )
 
-        for step in plan.steps:
-            visit(step.step_id)
-        return result
+            # 检测死锁：有 PENDING 步骤但没有任何步骤可就绪
+            if self._scheduler.is_stuck(plan, completed_ids):
+                logger.warning(
+                    "Orchestrator detected stuck plan_id=%s; skipping remaining PENDING steps",
+                    plan.plan_id,
+                )
+                for step in plan.steps:
+                    if step.status == StepStatus.PENDING:
+                        step_run = StepRun(
+                            step_id=step.step_id,
+                            title=step.title,
+                            status=StepRunStatus.SKIPPED,
+                            error="stuck: dependency cycle or all deps failed",
+                        )
+                        plan_run.step_runs.append(step_run)
+                        step.status = StepStatus.SKIPPED
+                        step.error = step_run.error
+                break
 
-    async def _execute_from_index(self, plan: TaskPlan, plan_run: PlanRun, start_index: int) -> PlanRun:
-        executor = StepExecutor(
-            runtime=self._runtime,
-            user_id=self._user_id,
-            session_id=plan_run.session_id,
-        )
-        ordered_steps = self._ordered_steps(plan)
-        completed_ids = {step.step_id for step in plan.steps if step.status == StepStatus.COMPLETED}
-        failed = any(step.status == StepStatus.FAILED for step in plan.steps)
+            ready_steps = self._scheduler.get_ready_steps(plan, completed_ids)
 
-        for index in range(start_index, len(ordered_steps)):
-            plan_run.current_step_index = index
-            step = ordered_steps[index]
-            if not all(dep in completed_ids for dep in step.dependencies):
+            if not ready_steps:
+                break  # 没有可执行步骤，结束
+
+            if has_failed:
+                # 有步骤失败，跳过剩余就绪步骤
+                for step in ready_steps:
+                    step_run = StepRun(
+                        step_id=step.step_id,
+                        title=step.title,
+                        status=StepRunStatus.SKIPPED,
+                        error="previous step failed",
+                    )
+                    plan_run.step_runs.append(step_run)
+                    step.status = StepStatus.SKIPPED
+                    step.error = step_run.error
+                self._persist(plan, plan_run)
+                break
+
+            logger.info(
+                "Wave %d: running %d step(s) in parallel: %s",
+                wave_index,
+                len(ready_steps),
+                [s.step_id for s in ready_steps],
+            )
+
+            # 为本 wave 的每个步骤创建独立 session 和 StepRun
+            wave_pairs: list[tuple[TaskStep, StepRun]] = []
+            tasks = []
+            for step in ready_steps:
+                step_session_id = f"{self._session_prefix}-{step.step_id}"
                 step_run = StepRun(
                     step_id=step.step_id,
                     title=step.title,
-                    status=StepRunStatus.SKIPPED,
-                    error="dependency not satisfied",
+                    step_session_id=step_session_id,
                 )
                 plan_run.step_runs.append(step_run)
-                step.status = StepStatus.SKIPPED
-                step.error = "dependency not satisfied"
-                continue
-            if failed:
-                step_run = StepRun(
-                    step_id=step.step_id,
-                    title=step.title,
-                    status=StepRunStatus.SKIPPED,
-                    error="previous step failed",
+                step.status = StepStatus.RUNNING
+                executor = StepExecutor(
+                    runtime=self._runtime,
+                    user_id=self._user_id,
+                    session_id=step_session_id,
                 )
-                plan_run.step_runs.append(step_run)
-                step.status = StepStatus.SKIPPED
-                step.error = "previous step failed"
-                continue
+                tasks.append(executor.run(step, step_run))
+                wave_pairs.append((step, step_run))
 
-            step_run = StepRun(step_id=step.step_id, title=step.title)
-            plan_run.step_runs.append(step_run)
-            await executor.run(step, step_run)
-            self._sync_step_from_run(step, step_run)
             self._persist(plan, plan_run)
 
-            if step_run.status == StepRunStatus.COMPLETED:
-                completed_ids.add(step.step_id)
-                plan_run.current_step_index = index + 1
-                continue
-            if step_run.status == StepRunStatus.WAITING_HUMAN:
+            # 并行执行本 wave
+            await asyncio.gather(*tasks)
+
+            # 处理本 wave 结果
+            first_waiting: tuple[TaskStep, StepRun] | None = None
+            for step, step_run in wave_pairs:
+                self._sync_step_from_run(step, step_run)
+                if step_run.status == StepRunStatus.WAITING_HUMAN and first_waiting is None:
+                    first_waiting = (step, step_run)
+
+            self._persist(plan, plan_run)
+
+            if first_waiting is not None:
+                wait_step, wait_run = first_waiting
                 plan.status = PlanStatus.WAITING_HUMAN
                 plan_run.status = "waiting_human"
-                plan_run.pending_step_id = step.step_id
+                plan_run.pending_step_id = wait_step.step_id
                 self._persist(plan, plan_run)
                 return self._finalize_plan_run(plan_run)
-            failed = True
+
+            wave_index += 1
+
+        # 确定最终状态
+        has_failed = any(s.status == StepStatus.FAILED for s in plan.steps)
+        if has_failed:
             plan.status = PlanStatus.FAILED
             plan_run.status = "failed"
-            plan_run.pending_step_id = None
-
-        if not failed:
+        else:
             plan.status = PlanStatus.COMPLETED
             plan_run.status = "completed"
             plan_run.completed = True
         plan_run.pending_step_id = None
         self._persist(plan, plan_run)
         return self._finalize_plan_run(plan_run)
-
-    def _ordered_steps(self, plan: TaskPlan) -> list[TaskStep]:
-        execution_order = plan.metadata.get("execution_order")
-        if isinstance(execution_order, list) and execution_order:
-            step_map = {step.step_id: step for step in plan.steps}
-            return [step_map[step_id] for step_id in execution_order if step_id in step_map]
-        ordered = self._execution_order(plan)
-        plan.metadata["execution_order"] = [step.step_id for step in ordered]
-        return ordered
 
     def _find_step_run(self, plan_run: PlanRun, step_id: str) -> StepRun | None:
         for step_run in plan_run.step_runs:

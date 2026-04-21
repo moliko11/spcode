@@ -24,6 +24,7 @@ class StepRun:
     title: str
     status: StepRunStatus = StepRunStatus.PENDING
     run_id: str | None = None          # 对应的 AgentRuntime.chat() run_id
+    step_session_id: str | None = None # 本步骤使用的 session_id（并行时各步独立）
     output: str | None = None
     error: str | None = None
     pending_human_request: dict[str, Any] | None = None
@@ -42,6 +43,7 @@ class StepRun:
             "title": self.title,
             "status": self.status.value,
             "run_id": self.run_id,
+            "step_session_id": self.step_session_id,
             "output": self.output,
             "error": self.error,
             "pending_human_request": self.pending_human_request,
@@ -57,6 +59,7 @@ class StepRun:
             title=data["title"],
             status=StepRunStatus(data.get("status", StepRunStatus.PENDING.value)),
             run_id=data.get("run_id"),
+            step_session_id=data.get("step_session_id"),
             output=data.get("output"),
             error=data.get("error"),
             pending_human_request=data.get("pending_human_request"),
