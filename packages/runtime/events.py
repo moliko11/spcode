@@ -9,11 +9,17 @@ from .models import AgentEvent, EventType
 
 
 class EventSubscriber(Protocol):
+    """
+    事件订阅器
+    """
     async def handle(self, event: AgentEvent) -> None:
         ...
 
 
 class EventBus:
+    """
+    事件总线
+    """
     def __init__(self) -> None:
         self._subscribers: list[EventSubscriber] = []
 
@@ -30,6 +36,9 @@ class EventBus:
 
 
 class LoggingSubscriber:
+    """
+    日志事件订阅器
+    """
     async def handle(self, event: AgentEvent) -> None:
         logger.info(
             "event=%s run_id=%s step=%s payload=%s",
@@ -41,6 +50,9 @@ class LoggingSubscriber:
 
 
 class AuditSubscriber:
+    """
+    审计事件订阅器
+    """
     def __init__(self, path: Path = AUDIT_LOG_PATH) -> None:
         self.path = path
 

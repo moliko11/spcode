@@ -6,11 +6,17 @@ from .models import ToolSpec
 
 
 class BaseTool(Protocol):
+    """
+    基础工具接口
+    """
     async def arun(self, arguments: dict[str, Any]) -> Any:
         ...
 
 
 class ToolRegistry:
+    """
+    工具注册器
+    """
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._tools: dict[str, BaseTool] = {}

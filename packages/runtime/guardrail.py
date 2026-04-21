@@ -7,6 +7,9 @@ from .models import GuardrailViolation, ToolResult
 
 
 def workspace_resolve(path_str: str) -> Path:
+    """
+    工作空间解析
+    """
     base = WORKSPACE_DIR.resolve()
     target = (WORKSPACE_DIR / path_str).resolve()
     if target != base and base not in target.parents:
@@ -15,12 +18,18 @@ def workspace_resolve(path_str: str) -> Path:
 
 
 def truncate_text(text: str | None, limit: int) -> str | None:
+    """
+    文本截取
+    """
     if text is None or len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[truncated]"
 
 
 class GuardrailEngine:
+    """
+
+    """
     def validate_user_input(self, task: str) -> None:
         blocked = ["steal secrets", "delete production database"]
         lower_task = task.lower()

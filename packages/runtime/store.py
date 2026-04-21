@@ -18,6 +18,9 @@ def ensure_dirs() -> None:
 
 
 class FileSessionStore:
+    """
+    会话存储
+    """
     def __init__(self, root: Path) -> None:
         self.root = root
 
@@ -41,6 +44,9 @@ class FileSessionStore:
 
 
 class FileCheckpointStore:
+    """
+    检查点存储
+    """
     def __init__(self, root: Path) -> None:
         self.root = root
 

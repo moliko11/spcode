@@ -54,11 +54,17 @@ from .store import FileCheckpointStore, FileSessionStore, ensure_dirs
 
 
 class GetCurrentTimeTool:
+    """
+    获取当前时间工具
+    """
     async def arun(self, arguments: dict[str, Any]) -> str:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
 
 class CalculatorTool:
+    """
+    计算工具
+    """
     async def arun(self, arguments: dict[str, Any]) -> str:
         expression = arguments["expression"]
         tree = ast.parse(expression, mode="eval")
@@ -87,6 +93,9 @@ class CalculatorTool:
 
 
 class ListDirTool:
+    """
+    列出目录工具
+    """
     async def arun(self, arguments: dict[str, Any]) -> str:
         root = workspace_resolve(arguments.get("path", "."))
         if not root.exists():

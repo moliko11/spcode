@@ -6,6 +6,9 @@ from .models import AgentState, HumanInterventionRequest, HumanInterventionRequi
 
 
 class PermissionController:
+    """
+    权限控制器
+    """
     def __init__(self, role_getter: Callable[[str], str]) -> None:
         self._role_getter = role_getter
 
@@ -16,6 +19,9 @@ class PermissionController:
 
 
 class ApprovalController:
+    """
+    审批控制器
+    """
     def needs_approval(self, spec: ToolSpec, call: ToolCall) -> bool:
         if call.metadata.get("approved"):
             return False

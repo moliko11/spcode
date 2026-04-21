@@ -11,76 +11,103 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 
 class GuardrailViolation(Exception):
+    """
+    障碍物异常
+    """
     pass
 
 
 class PermissionDenied(Exception):
+    """
+    权限拒绝异常
+    """
     pass
 
 
 class BudgetExceeded(Exception):
+    """
+    预算超出异常
+    """
     pass
 
 
 class HumanInterventionRequired(Exception):
+    """
+    人工干预需要异常
+    """
     def __init__(self, request: "HumanInterventionRequest") -> None:
         super().__init__(request.reason)
         self.request = request
 
 
 class RunStatus(str, enum.Enum):
-    IDLE = "idle"
-    RUNNING = "running"
-    TOOL_RUNNING = "tool_running"
-    WAITING_HUMAN = "waiting_human"
-    COMPLETED = "completed"
-    DEGRADED = "degraded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    """
+    运行状态
+    """
+    IDLE = "idle" # 空闲
+    RUNNING = "running" # 运行中
+    TOOL_RUNNING = "tool_running" # 工具运行中
+    WAITING_HUMAN = "waiting_human" # 等待人工干预
+    COMPLETED = "completed" # 完成
+    DEGRADED = "degraded" # 降级
+    FAILED = "failed" # 失败
+    CANCELLED = "cancelled" # 巖消
 
 
 class Phase(str, enum.Enum):
-    DECIDING = "deciding"
-    TOOL_PENDING = "tool_pending"
-    TOOL_EXECUTED = "tool_executed"
-    WAITING_HUMAN = "waiting_human"
-    FINALIZING = "finalizing"
-    COMPLETED = "completed"
+    """
+    步骤阶段
+    """
+    DECIDING = "deciding" # 决策中
+    TOOL_PENDING = "tool_pending" # 工具待调用
+    TOOL_EXECUTED = "tool_executed" # 工具已调用
+    WAITING_HUMAN = "waiting_human" # 等待人工干预
+    FINALIZING = "finalizing" # 最终化中
+    COMPLETED = "completed" # 完成
 
 
 class EventType(str, enum.Enum):
-    RUN_STARTED = "run_started"
-    RUN_RESUMED = "run_resumed"
-    STEP_STARTED = "step_started"
-    MODEL_OUTPUT = "model_output"
-    TOOL_SELECTED = "tool_selected"
-    TOOL_STARTED = "tool_started"
-    TOOL_FINISHED = "tool_finished"
-    TOOL_FAILED = "tool_failed"
-    HUMAN_REQUIRED = "human_required"
-    HUMAN_APPROVED = "human_approved"
-    HUMAN_REJECTED = "human_rejected"
-    STEP_FINISHED = "step_finished"
-    CHECKPOINT_SAVED = "checkpoint_saved"
-    RUN_COMPLETED = "run_completed"
-    RUN_DEGRADED = "run_degraded"
-    RUN_FAILED = "run_failed"
-    CONTEXT_SNIPPED = "context_snipped"
-    MICROCOMPACT_APPLIED = "microcompact_applied"
-    MEMORY_RECALLED = "memory_recalled"
-    MEMORY_STORED = "memory_stored"
-    AUTOCOMPACT_APPLIED = "autocompact_applied"
+    """
+    事件类型
+    """
+    RUN_STARTED = "run_started" # 运行开始
+    RUN_RESUMED = "run_resumed" # 运行恢复
+    STEP_STARTED = "step_started" # 步骤开始
+    MODEL_OUTPUT = "model_output" # 模型输出
+    TOOL_SELECTED = "tool_selected" # 工具选择
+    TOOL_STARTED = "tool_started" # 工具开始
+    TOOL_FINISHED = "tool_finished" # 工具完成
+    TOOL_FAILED = "tool_failed" # 工具失败
+    HUMAN_REQUIRED = "human_required" # 人工干预需要
+    HUMAN_APPROVED = "human_approved" # 人工干预审批
+    HUMAN_REJECTED = "human_rejected" # 人工干预拒绝
+    STEP_FINISHED = "step_finished" # 步骤完成
+    CHECKPOINT_SAVED = "checkpoint_saved" # 检查点保存
+    RUN_COMPLETED = "run_completed" # 运行完成
+    RUN_DEGRADED = "run_degraded" # 运行降级
+    RUN_FAILED = "run_failed" # 运行失败
+    CONTEXT_SNIPPED = "context_snipped" # 上下文截取
+    MICROCOMPACT_APPLIED = "microcompact_applied" # 微压缩应用
+    MEMORY_RECALLED = "memory_recalled" # 内存召回
+    MEMORY_STORED = "memory_stored" # 内存存储
+    AUTOCOMPACT_APPLIED = "autocompact_applied" # 自动压缩应用
 
 
 @dataclass(slots=True)
 class SessionMessage:
-    role: str
-    content: str
-    created_at: float = field(default_factory=time.time)
+    """
+    会话消息
+    """
+    role: str # 角色
+    content: str # 内容
+    created_at: float = field(default_factory=time.time) # 创建时间
 
 
 @dataclass(slots=True)
 class ToolCall:
+    """
+    工具调用
+    """
     call_id: str
     tool_name: str
     arguments: dict[str, Any]
@@ -90,6 +117,9 @@ class ToolCall:
 
 @dataclass(slots=True)
 class ToolResult:
+    """
+    工具结果
+    """
     call_id: str
     tool_name: str
     ok: bool
@@ -110,6 +140,9 @@ class ToolResult:
 
 @dataclass(slots=True)
 class AgentEvent:
+    """
+    agent事件
+    """
     run_id: str
     event_type: EventType
     ts: float
@@ -119,6 +152,9 @@ class AgentEvent:
 
 @dataclass(slots=True)
 class HumanInterventionRequest:
+    """
+    人工干预请求
+    """
     reason: str
     context: dict[str, Any]
     suggested_actions: list[str] = field(default_factory=list)
@@ -126,6 +162,9 @@ class HumanInterventionRequest:
 
 @dataclass(slots=True)
 class StepRecord:
+    """
+    步骤记录
+    """
     step: int
     phase: str
     raw_content: str
@@ -135,6 +174,9 @@ class StepRecord:
 
 @dataclass(slots=True)
 class ToolSpec:
+    """
+    工具规格
+    """
     name: str
     description: str
     parameters: dict[str, Any]
@@ -158,6 +200,9 @@ class ToolSpec:
 
 @dataclass(slots=True)
 class ShellToolSpec(ToolSpec):
+    """
+    shell工具规格
+    """
     allowed_commands: list[str] = field(default_factory=list)
     blocked_patterns: list[str] = field(
         default_factory=lambda: [
@@ -177,6 +222,9 @@ class ShellToolSpec(ToolSpec):
 
 @dataclass(slots=True)
 class AgentState:
+    """
+    agent状态
+    """
     run_id: str
     user_id: str
     task: str
@@ -200,6 +248,9 @@ class AgentState:
 
 @dataclass(slots=True)
 class OrchestrationTurn:
+    """
+    chestration轮
+    """
     turn_index: int
     output: str
     run_id: str
@@ -208,12 +259,18 @@ class OrchestrationTurn:
 
 @dataclass(slots=True)
 class OrchestrationResult:
+    """
+    chestration结果
+    """
     turns: list[OrchestrationTurn]
     completed: bool
     final_output: str
 
 
 def to_jsonable(obj: Any) -> Any:
+    """
+    将对象转换为可序列化的格式
+    """
     if isinstance(obj, enum.Enum):
         return obj.value
     if dataclasses.is_dataclass(obj):
@@ -226,10 +283,16 @@ def to_jsonable(obj: Any) -> Any:
 
 
 def safe_json_dumps(data: Any) -> str:
+    """
+    安全JSON序列化
+    """
     return json.dumps(data, ensure_ascii=False, sort_keys=True)
 
 
 def serialize_message(msg: Any) -> dict[str, Any]:
+    """
+    序列化消息
+    """
     if isinstance(msg, SystemMessage):
         return {"type": "system", "content": msg.content}
     if isinstance(msg, HumanMessage):
@@ -247,6 +310,9 @@ def serialize_message(msg: Any) -> dict[str, Any]:
 
 
 def deserialize_message(data: dict[str, Any]) -> Any:
+    """
+    反序列化消息
+    """
     msg_type = data["type"]
     if msg_type == "system":
         return SystemMessage(content=data["content"])
@@ -264,6 +330,9 @@ def deserialize_message(data: dict[str, Any]) -> Any:
 
 
 def normalize_tool_message(result: ToolResult) -> str:
+    """
+    归一化工具执行结果消息
+    """
     if result.ok:
         return result.output or result.stdout or ""
     return result.error or result.stderr or "tool execution failed"

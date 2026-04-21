@@ -29,6 +29,9 @@ from .registry import ToolRegistry
 
 
 class ShellExecutor:
+    """
+    Shell工具执行器
+    """
     def __init__(self, workspace_dir: Path = WORKSPACE_DIR) -> None:
         self.workspace_dir = workspace_dir
 
@@ -110,6 +113,9 @@ class ShellExecutor:
 
 
 class ShellTool:
+    """
+    Shell工具
+    """
     def __init__(self, executor: ShellExecutor, spec_getter: Callable[[], ShellToolSpec]) -> None:
         self.executor = executor
         self.spec_getter = spec_getter
@@ -119,6 +125,9 @@ class ShellTool:
 
 
 class ToolExecutor:
+    """
+    工具执行器
+    """
     def __init__(
         self,
         registry: ToolRegistry,

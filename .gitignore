@@ -12,3 +12,4 @@ wheels/
 .__pycache__/
 .pytest_cache/
 runtime_data/
+docs/

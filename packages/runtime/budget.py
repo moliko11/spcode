@@ -10,6 +10,9 @@ from .models import AgentState, BudgetExceeded, ToolResult, to_jsonable
 
 
 class RetryPolicy:
+    """
+    重试策略
+    """
     def __init__(self, max_retries: int = 2, base_delay: float = 0.4) -> None:
         self.max_retries = max_retries
         self.base_delay = base_delay
@@ -39,6 +42,9 @@ class RetryPolicy:
 
 
 class IdempotencyStore:
+    """
+    幂等性存储
+    """
     def __init__(self) -> None:
         self._results: dict[str, ToolResult] = {}
 
@@ -56,6 +62,9 @@ class IdempotencyStore:
 
 
 class BudgetController:
+    """
+    预算控制器
+    """
     def __init__(self, max_steps: int, max_tool_calls: int, max_seconds: int) -> None:
         self.max_steps = max_steps
         self.max_tool_calls = max_tool_calls
@@ -71,6 +80,9 @@ class BudgetController:
 
 
 def snapshot_workspace(root: Path = WORKSPACE_DIR) -> dict[str, tuple[int, int]]:
+    """
+    工作空间快照
+    """
     snapshot: dict[str, tuple[int, int]] = {}
     if not root.exists():
         return snapshot
@@ -82,6 +94,9 @@ def snapshot_workspace(root: Path = WORKSPACE_DIR) -> dict[str, tuple[int, int]]
 
 
 def diff_workspace(before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]]) -> list[str]:
+    """
+    工作空间差异
+    """
     changed = set(before) ^ set(after)
     for path, stat in before.items():
         if path in after and after[path] != stat:
