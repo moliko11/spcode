@@ -210,6 +210,8 @@ class ContextInjector:
 
 **把一个复杂目标拆成有序的子任务，并行执行独立任务，知道哪里完成了/哪里失败了。**
 
+> 展开设计：见 [`WORKFLOW_PLANNING_SYSTEM.md`](./WORKFLOW_PLANNING_SYSTEM.md)。该文档在本节 MVP 设计基础上补充了 Claude Code / Codex 风格的 plan-only 模式、计划审批、工作流状态机、step 验收标准、evidence/attempt 记录、资源锁、hooks、ProjectGuideLoader、ToolSearch 集成、持久化恢复、测试策略和分阶段落地路线。
+
 ##### Plan-Execute-Verify 循环
 
 ```
@@ -314,11 +316,42 @@ class Orchestrator:
 | 2B.3 | `planner/planner.py` — Planner (create_plan + replan) |
 | 2B.4 | `planner/scheduler.py` — Scheduler (拓扑排序，支持并行就绪队列) |
 | 2B.5 | `planner/verifier.py` — Verifier (基于验收标准判断完成质量) |
-| 2B.6 | `orchestrator/models.py` — OrchestrationResult, TurnRecord |
-| 2B.7 | `orchestrator/orchestrator.py` — Orchestrator (驱动循环) |
-| 2B.8 | `runtime/agent_loop.py` 新增 `orchestrate()` 方法，调用 Orchestrator |
-| 2B.9 | `main.py orchestrate` 命令实现 |
-| 2B.10 | 测试：计划生成、拓扑调度、重规划 |
+| 2B.6 | `tools/TodoWriteTool` — 轻量计划/待办状态维护 |
+| 2B.7 | `tools/EnterPlanModeTool` / `tools/ExitPlanModeTool` — 计划模式进入/退出与审批边界 |
+| 2B.8 | `tools/TaskCreateTool` / `TaskUpdateTool` / `TaskListTool` — workflow task 落盘、更新和查询 |
+| 2B.9 | `tools/TaskOutputTool` / `TaskStopTool` — 任务结果导出和中止 |
+| 2B.10 | `WebSearchTool` / `WebFetchTool` 适配 workflow evidence 记录 |
+| 2B.11 | `orchestrator/models.py` — OrchestrationResult, TurnRecord |
+| 2B.12 | `orchestrator/orchestrator.py` — Orchestrator (驱动循环) |
+| 2B.13 | `runtime/agent_loop.py` 新增 `orchestrate()` 方法，调用 Orchestrator |
+| 2B.14 | `main.py orchestrate` 命令实现 |
+| 2B.15 | 测试：计划生成、拓扑调度、重规划、任务工具状态流转 |
+
+> Agent/Team 工具（`AgentTool`, `SendMessageTool`, `TeamCreateTool`, `TeamDeleteTool`）后置到工作流和任务模型稳定之后；`NotebookEditTool` 等明确支持 `.ipynb` 编辑策略后再接入。
+
+##### 2B 实施节奏（缩小动作跨度）
+
+为避免一次性改动过大，2B 按 W1 -> W3 先落地，W4/W5 延后：
+
+| 批次 | 范围 | 时间盒 | 完成标志 |
+|---|---|---|---|
+| W1（仅计划） | `planner/models.py`、`planner/prompts.py`、`planner/planner.py`、`planner/store.py`、`main.py plan` | 1-2 天 | 能产出并保存带 dependencies + acceptance criteria 的 plan（不执行工具） |
+| W2（顺序执行） | `orchestrator/models.py`、`orchestrator/orchestrator.py`、`orchestrator/executor.py`、`main.py orchestrate` 最小接线 | 1-2 天 | 按 step 串行执行并记录 step 状态 |
+| W3（验证与重规划） | `planner/verifier.py`、`planner/replanner.py`、max_attempts、失败重规划事件 | 1-2 天 | step 失败后能给出 retry/replan，而不是直接失败 |
+
+当前阶段先不做：
+
+- 并行调度与资源锁（W4）
+- 持久化恢复工作流（W5）
+- Agent/Team 多代理工具
+
+落地顺序建议：
+
+1. 先打通 Plan-only（可审阅、可保存、可回放）。
+2. 再做串行执行，保证可观测和可回滚。
+3. 最后加 verifier/replanner，提升稳定性。
+
+> 详细分期和验收命令见 [`WORKFLOW_PLANNING_SYSTEM.md`](./WORKFLOW_PLANNING_SYSTEM.md) 的“21. 分阶段落地任务”。
 
 ---
 

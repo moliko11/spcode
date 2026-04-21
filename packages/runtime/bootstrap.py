@@ -432,3 +432,15 @@ def build_runtime() -> AgentRuntime:
         archive_dir=MEMORY_TRANSCRIPTS_DIR,
     )
     return runtime
+
+
+def build_llm() -> "BaseChatModel":
+    """仅创建并返回 LLM 实例，供不需要完整 runtime 的场景使用（如 Planner）。"""
+    from langchain_core.language_models import BaseChatModel  # noqa: F401 (type hint only)
+    loader = create_model_loader(
+        model_url=MODEL_URL,
+        model_name=MODEL_NAME,
+        api_key=API_KEY,
+        temperature=TEMPERATURE,
+    )
+    return loader.load()

@@ -5,7 +5,11 @@ import asyncio
 import json
 import os
 
-from packages.runtime.bootstrap import build_runtime
+from packages.runtime.bootstrap import build_runtime, build_llm
+from packages.runtime.config import PLANS_DIR
+from packages.planner.planner import Planner
+from packages.planner.store import PlanStore
+from packages.orchestrator.orchestrator import Orchestrator
 
 
 def configure_provider(args: argparse.Namespace) -> None:
@@ -40,15 +44,19 @@ async def run_chat(args: argparse.Namespace) -> None:
 async def run_orchestrate(args: argparse.Namespace) -> None:
     configure_provider(args)
     runtime = build_runtime()
-    result = await runtime.orchestrate(
+    llm = build_llm()
+    planner = Planner(llm=llm)
+    plan_store = PlanStore(PLANS_DIR)
+    orchestrator = Orchestrator(
+        runtime=runtime,
+        planner=planner,
+        plan_store=plan_store,
         user_id=args.user_id,
-        session_id=args.session_id,
-        goal=args.goal,
-        max_turns=args.max_turns,
     )
-    for turn in result.turns:
-        print(f"[turn {turn.turn_index}] {turn.output}")
-    print(json.dumps({"completed": result.completed, "final_output": result.final_output}, ensure_ascii=False, indent=2))
+    plan_run = await orchestrator.run(goal=args.goal, context=args.context or "")
+    print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+    status = "completed" if plan_run.completed else "failed"
+    print(f"\nplan_run_id={plan_run.plan_run_id}  status={status}  steps={len(plan_run.step_runs)}")
 
 
 async def run_show_session(args: argparse.Namespace) -> None:
@@ -59,6 +67,17 @@ async def run_show_session(args: argparse.Namespace) -> None:
     messages = await runtime.session_store.load_messages(args.session_id)
     for message in messages:
         print(json.dumps({"role": message.role, "content": message.content}, ensure_ascii=False))
+
+
+async def run_plan(args: argparse.Namespace) -> None:
+    configure_provider(args)
+    llm = build_llm()
+    planner = Planner(llm=llm)
+    store = PlanStore(PLANS_DIR)
+    plan = await planner.create_plan(goal=args.goal, context=args.context or "")
+    store.save(plan)
+    print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+    print(f"\nplan_id={plan.plan_id}  steps={len(plan.steps)}  saved to {PLANS_DIR / plan.plan_id}.json")
 
 
 async def run_show_memory(args: argparse.Namespace) -> None:
@@ -81,12 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser.add_argument("--session-id", default="demo-session")
     chat_parser.add_argument("message", nargs="?")
 
-    orchestrate_parser = subparsers.add_parser("orchestrate", help="Run autonomous multi-turn orchestration")
-    orchestrate_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
+    orchestrate_parser = subparsers.add_parser("orchestrate", help="Plan then sequentially execute a goal")
+    orchestrate_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="openai_compatible")
     orchestrate_parser.add_argument("goal")
     orchestrate_parser.add_argument("--user-id", default="demo-user")
-    orchestrate_parser.add_argument("--session-id", default="demo-session")
-    orchestrate_parser.add_argument("--max-turns", type=int, default=3)
+    orchestrate_parser.add_argument("--context", default="", help="Optional background context")
 
     show_session_parser = subparsers.add_parser("show-session", help="Print persisted session messages")
     show_session_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
@@ -96,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     show_memory_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     show_memory_parser.add_argument("--user-id", default="demo-user")
     show_memory_parser.add_argument("--limit", type=int, default=5)
+
+    plan_parser = subparsers.add_parser("plan", help="Generate a task plan without executing any tools")
+    plan_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="openai_compatible")
+    plan_parser.add_argument("goal", help="The goal to decompose into steps")
+    plan_parser.add_argument("--context", default="", help="Optional background context for the planner")
 
     return parser
 
@@ -107,6 +130,7 @@ def main() -> None:
         "orchestrate": run_orchestrate,
         "show-session": run_show_session,
         "show-memory": run_show_memory,
+        "plan": run_plan,
     }
     asyncio.run(handlers[args.command](args))
 
