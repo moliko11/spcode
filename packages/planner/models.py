@@ -12,6 +12,7 @@ class StepStatus(str, enum.Enum):
     PENDING = "pending"       # 尚未开始
     READY = "ready"           # 依赖已满足，可执行
     RUNNING = "running"       # 执行中
+    WAITING_HUMAN = "waiting_human" # 等待人工审批
     COMPLETED = "completed"   # 成功完成
     FAILED = "failed"         # 执行失败
     SKIPPED = "skipped"       # 被跳过（前置步骤失败）
@@ -22,6 +23,7 @@ class PlanStatus(str, enum.Enum):
     DRAFT = "draft"           # 刚生成，待审阅
     APPROVED = "approved"     # 已批准，可执行
     RUNNING = "running"       # 执行中
+    WAITING_HUMAN = "waiting_human" # 等待人工审批
     COMPLETED = "completed"   # 全部步骤完成
     FAILED = "failed"         # 执行失败或被中止
     REPLANNING = "replanning" # 重规划中

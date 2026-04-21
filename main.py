@@ -6,10 +6,11 @@ import json
 import os
 
 from packages.runtime.bootstrap import build_runtime, build_llm
-from packages.runtime.config import PLANS_DIR
+from packages.runtime.config import PLANS_DIR, PLAN_RUNS_DIR
 from packages.planner.planner import Planner
 from packages.planner.store import PlanStore
 from packages.orchestrator.orchestrator import Orchestrator
+from packages.orchestrator.store import PlanRunStore
 
 
 def configure_provider(args: argparse.Namespace) -> None:
@@ -47,16 +48,46 @@ async def run_orchestrate(args: argparse.Namespace) -> None:
     llm = build_llm()
     planner = Planner(llm=llm)
     plan_store = PlanStore(PLANS_DIR)
+    plan_run_store = PlanRunStore(PLAN_RUNS_DIR)
     orchestrator = Orchestrator(
         runtime=runtime,
         planner=planner,
         plan_store=plan_store,
+        plan_run_store=plan_run_store,
         user_id=args.user_id,
     )
     plan_run = await orchestrator.run(goal=args.goal, context=args.context or "")
     print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
-    status = "completed" if plan_run.completed else "failed"
-    print(f"\nplan_run_id={plan_run.plan_run_id}  status={status}  steps={len(plan_run.step_runs)}")
+    print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
+    pending = next((step for step in plan_run.step_runs if step.status.value == "waiting_human"), None)
+    if pending:
+        print("approval_required=true")
+        print(json.dumps(pending.pending_human_request, ensure_ascii=False, indent=2))
+
+
+async def run_approve(args: argparse.Namespace) -> None:
+    configure_provider(args)
+    runtime = build_runtime()
+    llm = build_llm()
+    planner = Planner(llm=llm)
+    plan_store = PlanStore(PLANS_DIR)
+    plan_run_store = PlanRunStore(PLAN_RUNS_DIR)
+    orchestrator = Orchestrator(
+        runtime=runtime,
+        planner=planner,
+        plan_store=plan_store,
+        plan_run_store=plan_run_store,
+        user_id=args.user_id,
+    )
+    edited_arguments = json.loads(args.edited_arguments) if args.edited_arguments else None
+    plan_run = await orchestrator.resume(
+        plan_run_id=args.plan_run_id,
+        approved=not args.reject,
+        approved_by=args.approved_by,
+        edited_arguments=edited_arguments,
+    )
+    print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+    print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
 
 
 async def run_show_session(args: argparse.Namespace) -> None:
@@ -106,6 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
     orchestrate_parser.add_argument("--user-id", default="demo-user")
     orchestrate_parser.add_argument("--context", default="", help="Optional background context")
 
+    approve_parser = subparsers.add_parser("approve", help="Approve or reject a paused plan run and continue execution")
+    approve_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="openai_compatible")
+    approve_parser.add_argument("plan_run_id")
+    approve_parser.add_argument("--user-id", default="demo-user")
+    approve_parser.add_argument("--approved-by", default="human")
+    approve_parser.add_argument("--edited-arguments", default="", help="Optional JSON object to override pending tool arguments")
+    approve_parser.add_argument("--reject", action="store_true", help="Reject the pending approval instead of approving it")
+
     show_session_parser = subparsers.add_parser("show-session", help="Print persisted session messages")
     show_session_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     show_session_parser.add_argument("--session-id", default="demo-session")
@@ -128,6 +167,7 @@ def main() -> None:
     handlers = {
         "chat": run_chat,
         "orchestrate": run_orchestrate,
+        "approve": run_approve,
         "show-session": run_show_session,
         "show-memory": run_show_memory,
         "plan": run_plan,

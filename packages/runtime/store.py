@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .config import AUDIT_LOG_PATH, CHECKPOINT_DIR, MEMORY_COMPACTION_DIR, MEMORY_TRANSCRIPTS_DIR, MEMORY_USERS_DIR, SESSION_DIR, WORKSPACE_DIR
+from .config import AUDIT_LOG_PATH, CHECKPOINT_DIR, MEMORY_COMPACTION_DIR, MEMORY_TRANSCRIPTS_DIR, MEMORY_USERS_DIR, PLAN_RUNS_DIR, SESSION_DIR, WORKSPACE_DIR
 from .models import AgentState, Phase, RunStatus, SessionMessage, StepRecord, ToolResult, to_jsonable
 
 
 def ensure_dirs() -> None:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    PLAN_RUNS_DIR.mkdir(parents=True, exist_ok=True)
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     MEMORY_USERS_DIR.mkdir(parents=True, exist_ok=True)

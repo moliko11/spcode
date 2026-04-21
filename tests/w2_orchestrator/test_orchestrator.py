@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from packages.orchestrator.models import StepRunStatus
 from packages.orchestrator.orchestrator import Orchestrator
+from packages.orchestrator.store import PlanRunStore
 from packages.planner.planner import Planner
 from packages.planner.store import PlanStore
 from packages.runtime.models import AgentState, RunStatus
@@ -61,6 +62,7 @@ class TestOrchestrator:
             runtime=runtime,
             planner=Planner(llm=llm),
             plan_store=PlanStore(tmp_path / "plans"),
+            plan_run_store=PlanRunStore(tmp_path / "plan_runs"),
         )
         plan_run = await orch.run("测试目标")
 
@@ -78,6 +80,7 @@ class TestOrchestrator:
             runtime=runtime,
             planner=Planner(llm=llm),
             plan_store=PlanStore(tmp_path / "plans"),
+            plan_run_store=PlanRunStore(tmp_path / "plan_runs"),
         )
         plan_run = await orch.run("测试目标")
 
@@ -107,6 +110,7 @@ class TestOrchestrator:
             runtime=runtime,
             planner=Planner(llm=llm),
             plan_store=PlanStore(tmp_path / "plans"),
+            plan_run_store=PlanRunStore(tmp_path / "plan_runs"),
         )
         await orch.run("测试目标")
         assert call_order == ["step_1", "step_2"]
@@ -117,7 +121,12 @@ class TestOrchestrator:
         runtime = MagicMock()
         runtime.chat = AsyncMock(return_value=_agent_state())
         store = PlanStore(tmp_path / "plans")
-        orch = Orchestrator(runtime=runtime, planner=Planner(llm=llm), plan_store=store)
+        orch = Orchestrator(
+            runtime=runtime,
+            planner=Planner(llm=llm),
+            plan_store=store,
+            plan_run_store=PlanRunStore(tmp_path / "plan_runs"),
+        )
 
         plan_run = await orch.run("测试目标")
 
@@ -138,6 +147,7 @@ class TestOrchestrator:
             runtime=runtime,
             planner=Planner(llm=llm),
             plan_store=PlanStore(tmp_path / "plans"),
+            plan_run_store=PlanRunStore(tmp_path / "plan_runs"),
         )
         plan_run = await orch.run("测试目标")
 

@@ -38,13 +38,7 @@ class StepExecutor:
                 session_id=self._session_id,
                 message=prompt,
             )
-            step_run.run_id = state.run_id
-            if state.status == RunStatus.COMPLETED:
-                step_run.status = StepRunStatus.COMPLETED
-                step_run.output = state.final_output or ""
-            else:
-                step_run.status = StepRunStatus.FAILED
-                step_run.error = state.failure_reason or f"status={state.status.value}"
+            self._apply_state(step_run, state)
         except Exception as exc:
             logger.exception("StepExecutor step=%s failed", step.step_id)
             step_run.status = StepRunStatus.FAILED
@@ -52,6 +46,41 @@ class StepExecutor:
         finally:
             step_run.finished_at = time.time()
 
+        return step_run
+
+    async def resume(
+        self,
+        step_run: StepRun,
+        approved: bool,
+        approved_by: str = "human",
+        edited_arguments: dict | None = None,
+    ) -> StepRun:
+        """恢复一个等待审批的步骤。"""
+        if not step_run.run_id:
+            raise ValueError("step_run.run_id is required to resume")
+        step_run.status = StepRunStatus.RUNNING
+        try:
+            state = await self._runtime.resume(
+                step_run.run_id,
+                human_decision={
+                    "approved": approved,
+                    "approved_by": approved_by,
+                    "edited_arguments": edited_arguments,
+                },
+            )
+            if not approved:
+                step_run.run_id = getattr(state, "run_id", None)
+                step_run.status = StepRunStatus.FAILED
+                step_run.error = getattr(state, "final_output", None) or "human approval rejected"
+                step_run.pending_human_request = None
+                return step_run
+            self._apply_state(step_run, state)
+        except Exception as exc:
+            logger.exception("StepExecutor resume run_id=%s failed", step_run.run_id)
+            step_run.status = StepRunStatus.FAILED
+            step_run.error = str(exc)
+        finally:
+            step_run.finished_at = time.time()
         return step_run
 
     # ------------------------------------------------------------------
@@ -64,3 +93,21 @@ class StepExecutor:
         if step.suggested_tools:
             parts.append(f"\n## 建议工具\n{', '.join(step.suggested_tools)}")
         return "\n\n".join(parts)
+
+    def _apply_state(self, step_run: StepRun, state: object) -> None:
+        step_run.run_id = getattr(state, "run_id", None)
+        step_run.pending_human_request = getattr(state, "pending_human_request", None)
+        status = getattr(state, "status")
+        if status == RunStatus.COMPLETED:
+            step_run.status = StepRunStatus.COMPLETED
+            step_run.output = getattr(state, "final_output", None) or ""
+            step_run.error = None
+            step_run.pending_human_request = None
+            return
+        if status == RunStatus.WAITING_HUMAN:
+            step_run.status = StepRunStatus.WAITING_HUMAN
+            step_run.error = None
+            return
+        step_run.status = StepRunStatus.FAILED
+        step_run.error = getattr(state, "failure_reason", None) or f"status={status.value}"
+        step_run.pending_human_request = None
