@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+from typing import Any
 
 from packages.runtime.bootstrap import build_runtime, build_llm
 from packages.runtime.config import PLANS_DIR, PLAN_RUNS_DIR
@@ -11,6 +12,40 @@ from packages.planner.planner import Planner
 from packages.planner.store import PlanStore
 from packages.orchestrator.orchestrator import Orchestrator
 from packages.orchestrator.store import PlanRunStore
+
+
+def _find_waiting_step(plan_run: Any) -> Any | None:
+    return next((step for step in plan_run.step_runs if step.status.value == "waiting_human"), None)
+
+
+def _prompt_approval_action(pending_request: dict[str, Any]) -> tuple[bool, dict[str, Any] | None, str]:
+    tool_name = pending_request.get("context", {}).get("tool_name", "tool")
+    print("\n审批请求：")
+    print(json.dumps(pending_request, ensure_ascii=False, indent=2))
+    print("\n请选择操作：")
+    print("  a = approve（批准）")
+    print("  r = reject（拒绝）")
+    print("  e = edit（编辑参数后批准）")
+
+    while True:
+        action = input(f"approval[{tool_name}] (a/r/e): ").strip().lower()
+        if action in {"a", "approve"}:
+            return True, None, "human"
+        if action in {"r", "reject"}:
+            return False, None, "human"
+        if action in {"e", "edit"}:
+            while True:
+                raw = input("请输入新的 arguments JSON: ").strip()
+                try:
+                    edited = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    print(f"JSON 解析失败：{exc}")
+                    continue
+                if not isinstance(edited, dict):
+                    print("edited arguments 必须是 JSON 对象")
+                    continue
+                return True, edited, "human"
+        print("无效输入，请输入 a / r / e")
 
 
 def configure_provider(args: argparse.Namespace) -> None:
@@ -59,10 +94,23 @@ async def run_orchestrate(args: argparse.Namespace) -> None:
     plan_run = await orchestrator.run(goal=args.goal, context=args.context or "")
     print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
     print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
-    pending = next((step for step in plan_run.step_runs if step.status.value == "waiting_human"), None)
-    if pending:
+
+    while True:
+        pending = _find_waiting_step(plan_run)
+        if pending is None:
+            break
         print("approval_required=true")
-        print(json.dumps(pending.pending_human_request, ensure_ascii=False, indent=2))
+        approved, edited_arguments, approved_by = _prompt_approval_action(pending.pending_human_request or {})
+        plan_run = await orchestrator.resume(
+            plan_run_id=plan_run.plan_run_id,
+            approved=approved,
+            approved_by=approved_by,
+            edited_arguments=edited_arguments,
+        )
+        print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
+        print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
+        if not approved:
+            break
 
 
 async def run_approve(args: argparse.Namespace) -> None:

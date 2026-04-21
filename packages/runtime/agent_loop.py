@@ -160,6 +160,8 @@ class AgentRuntime:
             state.pending_human_request = None
             state.status = RunStatus.RUNNING
             state.phase = Phase.TOOL_PENDING
+            # 重置计时器，排除等待人工审批所花费的时间
+            state.started_at = time.time()
             await self.event_bus.publish(
                 AgentEvent(
                     run_id=state.run_id,
