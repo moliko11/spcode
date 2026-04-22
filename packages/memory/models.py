@@ -14,6 +14,7 @@ class MemoryType(str, enum.Enum):
 
 @dataclass(slots=True)
 class MemoryEntry:
+    """记忆条目，代表一次记忆写入。"""
     memory_id: str
     user_id: str
     memory_type: MemoryType

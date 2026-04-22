@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .models import TaskPlan
+
+
+def _safe_id(value: str, label: str = "id") -> str:
+    """Validate that an ID only contains safe filename characters."""
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+", value):
+        raise ValueError(f"Invalid {label}: {value!r} — only A-Za-z0-9_.- allowed")
+    return value
 
 
 class PlanStore:
@@ -20,7 +28,7 @@ class PlanStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, plan_id: str) -> Path:
-        return self.root / f"{plan_id}.json"
+        return self.root / f"{_safe_id(plan_id, 'plan_id')}.json"
 
     def save(self, plan: TaskPlan) -> None:
         """保存或覆盖一个 plan"""

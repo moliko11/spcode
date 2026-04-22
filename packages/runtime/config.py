@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 from pathlib import Path
@@ -30,8 +31,8 @@ SHORT_MEMORY_TURNS = 8
 
 DEFAULT_READ_MAX_BYTES = 64 * 1024
 DEFAULT_SHELL_OUTPUT_LIMIT = 20_000
-# CURRENT_DATE: 用于模拟当前日期，用于测试和调试
-CURRENT_DATE = os.getenv("CURRENT_DATE", "2026-04-17")
+# CURRENT_DATE: defaults to today's real date; override via env for testing
+CURRENT_DATE = os.getenv("CURRENT_DATE", datetime.date.today().isoformat())
 CURRENT_TIMEZONE = os.getenv("CURRENT_TIMEZONE", "Asia/Shanghai")
 
 DEFAULT_LOADED_TOOL_NAMES = [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -9,7 +10,15 @@ from typing import Any
 from .models import CompactionRecord, MemoryEntry, MemoryType
 
 
+def _safe_id(value: str, label: str = "id") -> str:
+    """Validate that an ID only contains safe filename characters."""
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+", value):
+        raise ValueError(f"Invalid {label}: {value!r} — only A-Za-z0-9_.- allowed")
+    return value
+
+
 def _to_jsonable(obj: Any) -> Any:
+    """将复杂对象转换为 JSON 可序列化的形式。"""
     if isinstance(obj, MemoryType):
         return obj.value
     if isinstance(obj, list):
@@ -20,6 +29,7 @@ def _to_jsonable(obj: Any) -> Any:
 
 
 def _entry_to_dict(entry: MemoryEntry) -> dict[str, Any]:
+    """将 MemoryEntry 转换为 dict 以便 JSON 序列化。"""
     return {
         "memory_id": entry.memory_id,
         "user_id": entry.user_id,
@@ -71,7 +81,7 @@ class FileMemoryStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, user_id: str) -> Path:
-        return self.root / f"{user_id}.jsonl"
+        return self.root / f"{_safe_id(user_id, 'user_id')}.jsonl"
 
     async def save(self, entry: MemoryEntry) -> None:
         with self._path(entry.user_id).open("a", encoding="utf-8") as fh:

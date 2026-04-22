@@ -311,7 +311,7 @@ class Orchestrator:
 
 | # | 任务 |
 |---|------|
-| 2B.1 | `planner/models.py` — TaskPlan, TaskStep, 枚举 |
+| 2B.1 | `planner/moW3dels.py` — TaskPlan, TaskStep, 枚举 |
 | 2B.2 | `planner/prompts.py` — 任务拆分提示词（结构化 JSON 输出格式） |
 | 2B.3 | `planner/planner.py` — Planner (create_plan + replan) |
 | 2B.4 | `planner/scheduler.py` — Scheduler (拓扑排序，支持并行就绪队列) |

@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .config import AUDIT_LOG_PATH, CHECKPOINT_DIR, MEMORY_COMPACTION_DIR, MEMORY_TRANSCRIPTS_DIR, MEMORY_USERS_DIR, PLAN_RUNS_DIR, SESSION_DIR, WORKSPACE_DIR
 from .models import AgentState, Phase, RunStatus, SessionMessage, StepRecord, ToolResult, to_jsonable
+
+
+def _safe_id(value: str, label: str = "id") -> str:
+    """Validate that an ID only contains safe filename characters.
+    Raises ValueError on path traversal or invalid characters.
+    Allowed: A-Za-z0-9 _ . -
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+", value):
+        raise ValueError(f"Invalid {label}: {value!r} — only A-Za-z0-9_.- allowed")
+    return value
 
 
 def ensure_dirs() -> None:
@@ -26,7 +37,7 @@ class FileSessionStore:
         self.root = root
 
     def _path(self, session_id: str) -> Path:
-        return self.root / f"{session_id}.json"
+        return self.root / f"{_safe_id(session_id, 'session_id')}.json"
 
     async def load_messages(self, session_id: str) -> list[SessionMessage]:
         path = self._path(session_id)
@@ -52,7 +63,7 @@ class FileCheckpointStore:
         self.root = root
 
     def _path(self, run_id: str) -> Path:
-        return self.root / f"{run_id}.json"
+        return self.root / f"{_safe_id(run_id, 'run_id')}.json"
 
     def save(self, state: AgentState) -> None:
         payload = to_jsonable(state)

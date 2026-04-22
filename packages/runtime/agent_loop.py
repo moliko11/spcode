@@ -110,7 +110,22 @@ class AgentRuntime:
             )
         )
         await self._save_checkpoint(state)
-        return await self._continue(state)
+        try:
+            return await self._continue(state)
+        except Exception as exc:
+            state.status = RunStatus.FAILED
+            state.failure_reason = f"unhandled error: {exc}"
+            state.phase = Phase.COMPLETED
+            state.finished_at = time.time()
+            await self.event_bus.publish(AgentEvent(
+                run_id=state.run_id,
+                event_type=EventType.RUN_COMPLETED,
+                ts=time.time(),
+                step=state.step,
+                payload={"final_output": None, "failure_reason": state.failure_reason},
+            ))
+            await self._save_checkpoint(state)
+            raise
 
     async def restore(self, run_id: str) -> AgentState:
         state = self.checkpoint_store.load(run_id)
@@ -181,7 +196,22 @@ class AgentRuntime:
             )
         )
         await self._save_checkpoint(state)
-        return await self._continue(state)
+        try:
+            return await self._continue(state)
+        except Exception as exc:
+            state.status = RunStatus.FAILED
+            state.failure_reason = f"unhandled error: {exc}"
+            state.phase = Phase.COMPLETED
+            state.finished_at = time.time()
+            await self.event_bus.publish(AgentEvent(
+                run_id=state.run_id,
+                event_type=EventType.RUN_COMPLETED,
+                ts=time.time(),
+                step=state.step,
+                payload={"final_output": None, "failure_reason": state.failure_reason},
+            ))
+            await self._save_checkpoint(state)
+            raise
 
     async def orchestrate(self, user_id: str, session_id: str, goal: str, max_turns: int = 3) -> OrchestrationResult:
         state = await self.chat(user_id=user_id, session_id=session_id, message=goal)
