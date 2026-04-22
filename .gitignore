@@ -12,4 +12,6 @@ wheels/
 .__pycache__/
 .pytest_cache/
 runtime_data/
-docs/
+docs/*
+!docs/
+!docs/WEB_AND_CLI_IMPLEMENTATION_RESEARCH.md
