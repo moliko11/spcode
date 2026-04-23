@@ -262,7 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser = subparsers.add_parser("chat", help="Run one turn or an interactive multi-turn chat")
     chat_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     chat_parser.add_argument("--user-id", default="demo-user-1")
-    chat_parser.add_argument("--session-id", default="demo-session-2")
+    chat_parser.add_argument("--session-id", default="demo-session-3")
     chat_parser.add_argument("--max-tool-calls", type=int, default=None, help="覆盖最大工具调用次数（默认 20）")
     chat_parser.add_argument("message", nargs="?")
 

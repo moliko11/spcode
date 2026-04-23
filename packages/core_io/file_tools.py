@@ -55,6 +55,15 @@ class FileReadTool(_WorkspaceToolMixin):
                 return _resolve_read_path(self.workspace_root, str(value), self.extra_roots)
         raise ValueError("path argument is required")
 
+    def _relative(self, path: Path) -> str:
+        """返回相对路径；skill 目录下的文件则返回可读的相对路径，无法计算时返回绝对路径。"""
+        for base in [self.workspace_root] + self.extra_roots:
+            try:
+                return str(path.resolve().relative_to(base.resolve())).replace("\\", "/")
+            except ValueError:
+                continue
+        return str(path.resolve()).replace("\\", "/")
+
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve_path(arguments)
         if not path.exists():
