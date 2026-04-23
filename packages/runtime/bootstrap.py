@@ -43,6 +43,7 @@ from .config import (
     TEMPERATURE,
     TOOL_CATALOG,
     WORKSPACE_DIR,
+    SKILL_ROOTS,
 )
 from .events import AuditSubscriber, EventBus, LoggingSubscriber
 from .executor import ToolExecutor
@@ -330,21 +331,29 @@ def build_runtime() -> AgentRuntime:
     registry.register(
         ToolSpec(
             name="skill",
-            description="Discover, inspect, and read local skills.",
+            description="Discover, inspect, read, invoke, and check dependencies of local skills.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "inspect", "read"]},
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "inspect", "read", "invoke", "list_files", "check_deps"],
+                    },
                     "query": {"type": "string"},
                     "skill_name": {"type": "string"},
                     "path": {"type": "string"},
+                    "arguments": {
+                        "type": "string",
+                        "description": "Arguments to pass when invoking a skill ($ARGUMENTS placeholder).",
+                    },
+                    "session_id": {"type": "string"},
                 },
                 "required": [],
             },
             side_effect="local_fs",
             sandbox_required=True,
         ),
-        CoreSkillTool(workspace_root=WORKSPACE_DIR),
+        CoreSkillTool(workspace_root=WORKSPACE_DIR, skill_roots=SKILL_ROOTS),
     )
     registry.register(
         ToolSpec(
@@ -409,9 +418,14 @@ def build_runtime() -> AgentRuntime:
         idempotency_store=idempotency_store,
         event_bus=event_bus,
     )
+    # Build a shared SkillTool instance so MessageBuilder can inject skill listings
+    skill_tool_instance = CoreSkillTool(workspace_root=WORKSPACE_DIR, skill_roots=SKILL_ROOTS)
     runtime = AgentRuntime(
         llm_client=NativeToolCallingLLMClient(llm=llm, model_name=MODEL_NAME),
-        message_builder=MessageBuilder(short_memory_turns=SHORT_MEMORY_TURNS),
+        message_builder=MessageBuilder(
+            short_memory_turns=SHORT_MEMORY_TURNS,
+            skill_tool=skill_tool_instance,
+        ),
         tool_executor=tool_executor,
         registry=registry,
         session_store=FileSessionStore(SESSION_DIR),

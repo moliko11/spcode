@@ -10,6 +10,13 @@ MODEL_NAME = "qwen3"
 API_KEY = "EMPTY"
 TEMPERATURE = 0.5
 
+# Project root: packages/runtime/ -> packages/ -> project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+# Skills root: configurable via AGENT_SKILLS_DIR env var; defaults to PROJECT_ROOT/skills/
+# In production, point this to a directory outside the source tree to avoid committing secrets.
+_skills_env = os.getenv("AGENT_SKILLS_DIR")
+SKILL_ROOTS = [Path(_skills_env).resolve() if _skills_env else PROJECT_ROOT / "skills"]
+
 RUNTIME_DIR = Path("./runtime_data")
 SESSION_DIR = RUNTIME_DIR / "sessions"
 CHECKPOINT_DIR = RUNTIME_DIR / "checkpoints"
@@ -48,9 +55,10 @@ DEFAULT_LOADED_TOOL_NAMES = [
     "web_fetch",
     "bash",
     "tool_search",
+    "skill",
 ]
 
-DYNAMIC_TOOL_NAMES = ["skill", "mcp"]
+DYNAMIC_TOOL_NAMES = ["mcp"]
 
 TOOL_CATALOG = [
     {"name": "get_current_time", "description": "Read the current local time in the runtime environment.", "category": "utility", "tags": ["time", "clock", "date"], "default_loaded": True, "requires_approval": False},

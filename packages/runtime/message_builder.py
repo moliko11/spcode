@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from .config import CURRENT_DATE, CURRENT_TIMEZONE, DEFAULT_LOADED_TOOL_NAMES, DYNAMIC_TOOL_NAMES, SHORT_MEMORY_TURNS, WORKSPACE_DIR
 from .models import AgentState
 
+if TYPE_CHECKING:
+    from packages.tools.SkillTool.tool import SkillTool
+
 
 class MessageBuilder:
-    def __init__(self, short_memory_turns: int = SHORT_MEMORY_TURNS) -> None:
+    def __init__(
+        self,
+        short_memory_turns: int = SHORT_MEMORY_TURNS,
+        skill_tool: "SkillTool | None" = None,
+    ) -> None:
         self.short_memory_turns = short_memory_turns
+        self.skill_tool = skill_tool
 
     def build_system_prompt(self, state: AgentState) -> str:
         loaded_tools = state.metadata.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES)
@@ -41,7 +49,7 @@ class MessageBuilder:
             "- Use `web_fetch` to inspect specific URLs.\n"
             "- Use `bash` only when specialized tools are insufficient.\n"
             "- Use `tool_search` if the currently loaded toolset appears insufficient.\n"
-            "- Use `skill` only after discovering a relevant skill.\n"
+            "- Use `skill` to load and invoke a skill when relevant.\n"
             "- Use `mcp` only after discovering a relevant MCP capability.\n\n"
             "Dynamic tools:\n"
             f"- Default loaded tools in this run: {loaded}\n"
@@ -58,6 +66,11 @@ class MessageBuilder:
             "- Summarize results based on observations.\n"
             "- State uncertainty when evidence is incomplete.\n"
         )
+        # Inject skill listing so LLM knows available skills without needing to call list
+        if self.skill_tool is not None:
+            listing = self.skill_tool.build_skill_listing()
+            if listing:
+                prompt += "\n\n" + listing + "\n"
         recall_text = state.metadata.get("recall_text")
         if recall_text:
             prompt += "\n" + recall_text + "\n"

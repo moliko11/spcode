@@ -76,6 +76,21 @@ async def run_chat(args: argparse.Namespace) -> None:
         print(f"assistant> {state.final_output or state.failure_reason or ''}")
         print(f"run_id={state.run_id} status={state.status.value}")
 
+        # 人工审批循环：bash/高风险工具需要确认后继续执行
+        while state.status.value == "waiting_human":
+            pending = state.pending_human_request or {}
+            approved, edited_args, approved_by = _prompt_approval_action(pending)
+            state = await runtime.resume(
+                run_id=state.run_id,
+                human_decision={
+                    "approved": approved,
+                    "approved_by": approved_by,
+                    "edited_arguments": edited_args,
+                },
+            )
+            print(f"assistant> {state.final_output or state.failure_reason or ''}")
+            print(f"run_id={state.run_id} status={state.status.value}")
+
 
 async def run_orchestrate(args: argparse.Namespace) -> None:
     configure_provider(args)
@@ -246,8 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat_parser = subparsers.add_parser("chat", help="Run one turn or an interactive multi-turn chat")
     chat_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
-    chat_parser.add_argument("--user-id", default="demo-user")
-    chat_parser.add_argument("--session-id", default="demo-session")
+    chat_parser.add_argument("--user-id", default="demo-user-1")
+    chat_parser.add_argument("--session-id", default="demo-session-1")
     chat_parser.add_argument("message", nargs="?")
 
     orchestrate_parser = subparsers.add_parser("orchestrate", help="Plan then sequentially execute a goal")

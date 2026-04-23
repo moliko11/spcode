@@ -19,7 +19,7 @@ def test_skill_tool_list_and_read(tmp_path: Path) -> None:
     assert listed["skills"][0]["title"] == "Demo Skill"
 
     inspected = asyncio.run(tool.arun({"action": "inspect", "skill_name": "demo_skill"}))
-    assert inspected["skill"]["summary"] == "content"
+    assert inspected["skill"]["description"] == "content"
 
     read = asyncio.run(tool.arun({"action": "read", "skill_name": "demo_skill"}))
     assert read["skill_name"] == "demo_skill"
