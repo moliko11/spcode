@@ -55,7 +55,7 @@ def configure_provider(args: argparse.Namespace) -> None:
 
 async def run_chat(args: argparse.Namespace) -> None:
     configure_provider(args)
-    runtime = build_runtime()
+    runtime = build_runtime(max_tool_calls=args.max_tool_calls)
 
     if args.message:
         state = await runtime.chat(user_id=args.user_id, session_id=args.session_id, message=args.message)
@@ -262,7 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser = subparsers.add_parser("chat", help="Run one turn or an interactive multi-turn chat")
     chat_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     chat_parser.add_argument("--user-id", default="demo-user-1")
-    chat_parser.add_argument("--session-id", default="demo-session-1")
+    chat_parser.add_argument("--session-id", default="demo-session-2")
+    chat_parser.add_argument("--max-tool-calls", type=int, default=None, help="覆盖最大工具调用次数（默认 20）")
     chat_parser.add_argument("message", nargs="?")
 
     orchestrate_parser = subparsers.add_parser("orchestrate", help="Plan then sequentially execute a goal")

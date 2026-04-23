@@ -2,19 +2,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .config import WORKSPACE_DIR
+from .config import SKILL_ROOTS, WORKSPACE_DIR
 from .models import GuardrailViolation, ToolResult
 
 
 def workspace_resolve(path_str: str) -> Path:
     """
-    工作空间解析
+    工作空间解析（写操作用）：仅允许 WORKSPACE_DIR 下的路径
     """
     base = WORKSPACE_DIR.resolve()
     target = (WORKSPACE_DIR / path_str).resolve()
     if target != base and base not in target.parents:
         raise GuardrailViolation(f"path escapes workspace: {path_str}")
     return target
+
+
+def read_resolve(path_str: str) -> Path:
+    """
+    只读路径解析：允许 WORKSPACE_DIR 或任意 SKILL_ROOTS 下的路径
+    """
+    # 先尝试绝对路径
+    candidate = Path(path_str)
+    if candidate.is_absolute():
+        target = candidate.resolve()
+    else:
+        target = (WORKSPACE_DIR / path_str).resolve()
+
+    allowed_bases = [WORKSPACE_DIR.resolve()] + [r.resolve() for r in SKILL_ROOTS]
+    for base in allowed_bases:
+        if target == base or base in target.parents:
+            return target
+    raise GuardrailViolation(f"path escapes workspace: {path_str}")
 
 
 def truncate_text(text: str | None, limit: int) -> str | None:
@@ -46,7 +64,7 @@ class GuardrailEngine:
             if not isinstance(expression, str) or not expression.strip():
                 raise GuardrailViolation("calculator requires a non-empty expression")
         elif tool_name == "file_read":
-            self._validate_workspace_path(tool_name, arguments, require_content=False)
+            self._validate_read_path(tool_name, arguments)
         elif tool_name == "file_write":
             self._validate_workspace_path(tool_name, arguments, require_content=True)
             mode = arguments.get("mode", "overwrite")
@@ -135,6 +153,13 @@ class GuardrailEngine:
     def validate_final_output(self, output: str) -> None:
         if not output.strip():
             raise GuardrailViolation("final output must not be empty")
+
+    def _validate_read_path(self, tool_name: str, arguments: dict[str, object]) -> None:
+        """只读路径校验：允许 WORKSPACE_DIR 或 SKILL_ROOTS 下的路径"""
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise GuardrailViolation(f"{tool_name}.path must be a non-empty string")
+        read_resolve(path)
 
     def _validate_workspace_path(self, tool_name: str, arguments: dict[str, object], require_content: bool) -> None:
         path = arguments.get("path")

@@ -112,7 +112,7 @@ class ListDirTool:
         return "\n".join(entries)
 
 
-def build_runtime() -> AgentRuntime:
+def build_runtime(max_tool_calls: int | None = None) -> AgentRuntime:
     ensure_dirs()
     loader = create_model_loader(
         model_url=MODEL_URL,
@@ -180,7 +180,7 @@ def build_runtime() -> AgentRuntime:
             side_effect="local_fs",
             sandbox_required=True,
         ),
-        CoreFileReadTool(workspace_root=WORKSPACE_DIR),
+        CoreFileReadTool(workspace_root=WORKSPACE_DIR, extra_roots=SKILL_ROOTS),
     )
     registry.register(
         ToolSpec(
@@ -434,7 +434,7 @@ def build_runtime() -> AgentRuntime:
         guardrail_engine=guardrail_engine,
         budget_controller=BudgetController(
             max_steps=MAX_STEPS,
-            max_tool_calls=MAX_TOOL_CALLS,
+            max_tool_calls=max_tool_calls if max_tool_calls is not None else MAX_TOOL_CALLS,
             max_seconds=MAX_SECONDS,
         ),
         idempotency_store=idempotency_store,

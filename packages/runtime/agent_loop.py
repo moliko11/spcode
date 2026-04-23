@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from typing import Any
 
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from .budget import BudgetController, IdempotencyStore
 from .config import DEFAULT_LOADED_TOOL_NAMES
@@ -116,7 +117,7 @@ class AgentRuntime:
             state.status = RunStatus.FAILED
             state.failure_reason = f"unhandled error: {exc}"
             state.phase = Phase.COMPLETED
-            state.finished_at = time.time()
+            state.updated_at = time.time()
             await self.event_bus.publish(AgentEvent(
                 run_id=state.run_id,
                 event_type=EventType.RUN_COMPLETED,
@@ -202,7 +203,7 @@ class AgentRuntime:
             state.status = RunStatus.FAILED
             state.failure_reason = f"unhandled error: {exc}"
             state.phase = Phase.COMPLETED
-            state.finished_at = time.time()
+            state.updated_at = time.time()
             await self.event_bus.publish(AgentEvent(
                 run_id=state.run_id,
                 event_type=EventType.RUN_COMPLETED,
@@ -283,24 +284,133 @@ class AgentRuntime:
                     state.phase = Phase.COMPLETED
                     await self._finalize(state)
                     return state
-                raw_call = tool_calls[0]
-                call = ToolCall(
-                    call_id=raw_call["id"],
-                    tool_name=raw_call["name"],
-                    arguments=raw_call["arguments"],
-                    idempotency_key=f"{state.run_id}:{raw_call['name']}:{safe_json_dumps(raw_call['arguments'])}",
-                )
-                state.pending_tool_call = to_jsonable(call)
-                state.phase = Phase.TOOL_PENDING
-                await self.event_bus.publish(
-                    AgentEvent(
-                        run_id=state.run_id,
-                        event_type=EventType.TOOL_SELECTED,
-                        ts=time.time(),
-                        step=state.step,
-                        payload={"tool_name": call.tool_name, "arguments": call.arguments},
+
+                # ── 并行执行多个 tool_calls ──────────────────────────────────
+                # 对每个 tool_call 逐一检查是否需要人工审批：
+                #   • 需要审批 → 退回到单步 TOOL_PENDING 流程（只处理第一个需要审批的）
+                #   • 全部低风险 → 并行执行，一次性将所有 ToolMessage 追加到 history
+                # 检测阶段：找出第一个需要审批的 call
+                approval_idx: int | None = None
+                for _i, _rc in enumerate(tool_calls):
+                    _spec = self.registry._specs.get(_rc["name"])
+                    if _spec is not None and getattr(_spec, "approval_policy", "never") == "always":
+                        approval_idx = _i
+                        break
+
+                if approval_idx is not None:
+                    # 有需要审批的工具：只处理 approval_idx 之前的低风险调用（若有），
+                    # 然后把需要审批的工具交给单步流程。
+                    # 为保证 AIMessage tool_call_id 与 ToolMessage 一一对应，
+                    # 先把 response 替换为只含当前批次的裁剪版本。
+                    batch = tool_calls[:approval_idx]  # 审批前的低风险批次
+                    pending_raw = tool_calls[approval_idx]  # 需要审批的
+
+                    if batch:
+                        # 先并行跑前面的低风险调用
+                        batch_calls = [
+                            ToolCall(
+                                call_id=rc["id"],
+                                tool_name=rc["name"],
+                                arguments=rc["arguments"],
+                                idempotency_key=f"{state.run_id}:{rc['name']}:{safe_json_dumps(rc['arguments'])}",
+                            )
+                            for rc in batch
+                        ]
+                        # 裁剪 AIMessage 只含这批 tool_calls（转换为 LangChain args 格式）
+                        lc_batch = [{"id": rc["id"], "name": rc["name"], "args": rc["arguments"], "type": "tool_call"} for rc in batch]
+                        trimmed = AIMessage(content=content or "", tool_calls=lc_batch)
+                        runtime_messages[-1] = trimmed
+                        for bc in batch_calls:
+                            await self.event_bus.publish(AgentEvent(
+                                run_id=state.run_id, event_type=EventType.TOOL_SELECTED,
+                                ts=time.time(), step=state.step,
+                                payload={"tool_name": bc.tool_name, "arguments": bc.arguments},
+                            ))
+                        results = await asyncio.gather(*[
+                            self.tool_executor.execute(state, bc) for bc in batch_calls
+                        ])
+                        for bc, br in zip(batch_calls, results):
+                            state.tool_results.append(br)
+                            runtime_messages.append(ToolMessage(
+                                content=normalize_tool_message(br), tool_call_id=bc.call_id
+                            ))
+                            self._apply_dynamic_tool_loading(state, br)
+                            await self.event_bus.publish(AgentEvent(
+                                run_id=state.run_id, event_type=EventType.STEP_FINISHED,
+                                ts=time.time(), step=state.step,
+                                payload={"tool_name": bc.tool_name, "ok": br.ok},
+                            ))
+                        state.metadata["tool_ledger"] = self.idempotency_store.export_snapshot()
+                        runtime_messages = self._refresh_system_prompt(state, runtime_messages)
+                        state.runtime_messages = [serialize_message(m) for m in runtime_messages]
+
+                    # 现在把需要审批的工具单独作为下一个 AIMessage 交给单步流程
+                    pending_call = ToolCall(
+                        call_id=pending_raw["id"],
+                        tool_name=pending_raw["name"],
+                        arguments=pending_raw["arguments"],
+                        idempotency_key=f"{state.run_id}:{pending_raw['name']}:{safe_json_dumps(pending_raw['arguments'])}",
                     )
-                )
+                    # 只含这一个 tool_call 的 AIMessage（转换为 LangChain args 格式）
+                    _pr = tool_calls[approval_idx]
+                    approval_ai_msg = AIMessage(content="", tool_calls=[{"id": _pr["id"], "name": _pr["name"], "args": _pr["arguments"], "type": "tool_call"}])
+                    if batch:
+                        # batch 已执行并有对应 ToolMessage，approval_ai_msg 作为新轮次追加
+                        runtime_messages.append(approval_ai_msg)
+                    else:
+                        # batch 为空：原始 AIMessage（含所有 tool_call_id）直接替换为只含审批项
+                        # 避免 history 中存在无 ToolMessage 的 tool_call_id 导致 400
+                        runtime_messages[-1] = approval_ai_msg
+                    state.runtime_messages = [serialize_message(m) for m in runtime_messages]
+                    state.pending_tool_call = to_jsonable(pending_call)
+                    state.phase = Phase.TOOL_PENDING
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.TOOL_SELECTED,
+                        ts=time.time(), step=state.step,
+                        payload={"tool_name": pending_call.tool_name, "arguments": pending_call.arguments},
+                    ))
+                    await self._save_checkpoint(state)
+                    continue
+
+                # 全部低风险：并行执行所有 tool_calls
+                all_calls = [
+                    ToolCall(
+                        call_id=rc["id"],
+                        tool_name=rc["name"],
+                        arguments=rc["arguments"],
+                        idempotency_key=f"{state.run_id}:{rc['name']}:{safe_json_dumps(rc['arguments'])}",
+                    )
+                    for rc in tool_calls
+                ]
+                for ac in all_calls:
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.TOOL_SELECTED,
+                        ts=time.time(), step=state.step,
+                        payload={"tool_name": ac.tool_name, "arguments": ac.arguments},
+                    ))
+                state.status = RunStatus.TOOL_RUNNING
+                all_results = await asyncio.gather(*[
+                    self.tool_executor.execute(state, ac) for ac in all_calls
+                ])
+                state.status = RunStatus.RUNNING
+                for ac, ar in zip(all_calls, all_results):
+                    state.tool_results.append(ar)
+                    runtime_messages.append(ToolMessage(
+                        content=normalize_tool_message(ar), tool_call_id=ac.call_id
+                    ))
+                    self._apply_dynamic_tool_loading(state, ar)
+                    await self.event_bus.publish(AgentEvent(
+                        run_id=state.run_id, event_type=EventType.STEP_FINISHED,
+                        ts=time.time(), step=state.step,
+                        payload={"tool_name": ac.tool_name, "ok": ar.ok},
+                    ))
+                state.metadata["tool_ledger"] = self.idempotency_store.export_snapshot()
+                runtime_messages = self._refresh_system_prompt(state, runtime_messages)
+                state.runtime_messages = [serialize_message(m) for m in runtime_messages]
+                state.pending_tool_call = None
+                state.pending_tool_result = None
+                state.phase = Phase.DECIDING
+                state.step += 1
                 await self._save_checkpoint(state)
                 continue
 

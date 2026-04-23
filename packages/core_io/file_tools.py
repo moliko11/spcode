@@ -7,6 +7,22 @@ from .models import FileEditResult, FileReadResult, FileWriteResult
 from .pathing import is_binary_file, read_text_with_limit, relative_to_workspace, resolve_workspace_path
 
 
+def _resolve_read_path(workspace_root: Path, raw_path: str, extra_roots: list[Path] | None = None) -> Path:
+    """解析只读路径：允许 workspace_root 或 extra_roots（如 skill 目录）下的绝对/相对路径。"""
+    if not raw_path:
+        raise ValueError("path cannot be empty")
+    candidate = Path(raw_path)
+    resolved = candidate.resolve() if candidate.is_absolute() else (workspace_root / candidate).resolve()
+    allowed = [workspace_root] + (extra_roots or [])
+    for base in allowed:
+        try:
+            resolved.relative_to(base.resolve())
+            return resolved
+        except ValueError:
+            continue
+    raise ValueError(f"path escapes workspace root: {raw_path}")
+
+
 class _WorkspaceToolMixin:
     def __init__(self, workspace_root: str | Path = ".", default_encoding: str = "utf-8") -> None:
         self.workspace_root = Path(workspace_root).resolve()
@@ -27,6 +43,17 @@ class FileReadTool(_WorkspaceToolMixin):
     name = "file_read"
     description = "Read text from a file inside the workspace."
     require_approval = False
+
+    def __init__(self, workspace_root: str | Path = ".", default_encoding: str = "utf-8", extra_roots: list[Path] | None = None) -> None:
+        super().__init__(workspace_root=workspace_root, default_encoding=default_encoding)
+        self.extra_roots = extra_roots or []
+
+    def _resolve_path(self, arguments: dict[str, Any]) -> Path:
+        for key in ("path", "file_path", "filepath", "filename"):
+            value = arguments.get(key)
+            if value:
+                return _resolve_read_path(self.workspace_root, str(value), self.extra_roots)
+        raise ValueError("path argument is required")
 
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve_path(arguments)
