@@ -357,6 +357,10 @@ def workspace_resolve(path_str: str) -> Path:
     return target
 
 
+def workspace_relative(path: Path) -> Path:
+    return path.resolve().relative_to(WORKSPACE_DIR.resolve())
+
+
 def truncate_text(text: str | None, limit: int) -> str | None:
     """
     截断文本，确保不超过指定长度。
@@ -376,7 +380,7 @@ def snapshot_workspace(root: Path) -> dict[str, tuple[int, int]]:
     for path in root.rglob("*"):
         if path.is_file():
             stat = path.stat()
-            snapshot[str(path.relative_to(WORKSPACE_DIR))] = (int(stat.st_mtime_ns), stat.st_size)
+            snapshot[str(workspace_relative(path))] = (int(stat.st_mtime_ns), stat.st_size)
     return snapshot
 
 
@@ -836,7 +840,7 @@ class WriteNoteTool:
         path = workspace_resolve(arguments["path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments["content"], encoding="utf-8")
-        return f"wrote file: {path.relative_to(WORKSPACE_DIR)}"
+        return f"wrote file: {workspace_relative(path)}"
 
 
 class ListDirTool:
@@ -849,7 +853,7 @@ class ListDirTool:
         entries = []
         for child in sorted(root.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
             kind = "dir" if child.is_dir() else "file"
-            entries.append(f"{kind}\t{child.relative_to(WORKSPACE_DIR)}")
+            entries.append(f"{kind}\t{workspace_relative(child)}")
         return "\n".join(entries)
 
 
@@ -862,7 +866,7 @@ class GlobSearchTool:
         pattern = arguments["pattern"]
         matches = []
         for path in root.rglob("*"):
-            rel = str(path.relative_to(WORKSPACE_DIR))
+            rel = str(workspace_relative(path))
             if fnmatch.fnmatch(rel, pattern):
                 matches.append(rel)
         return "\n".join(sorted(matches))
@@ -920,7 +924,7 @@ class ShellExecutor:
             exit_code=process.returncode,
             changed_files=changed_files,
             sandbox_mode=spec.working_dir_mode,
-            metadata={"command": command, "workdir": str(workdir.relative_to(WORKSPACE_DIR))},
+            metadata={"command": command, "workdir": str(workspace_relative(workdir))},
         )
 
     def _resolve_workdir(self, spec: ShellToolSpec, workdir: str) -> Path:

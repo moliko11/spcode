@@ -97,6 +97,12 @@ class StepExecutor:
     def _apply_state(self, step_run: StepRun, state: object) -> None:
         step_run.run_id = getattr(state, "run_id", None)
         step_run.pending_human_request = getattr(state, "pending_human_request", None)
+        metadata = getattr(state, "metadata", {})
+        if isinstance(metadata, dict):
+            step_run.metadata["runtime_timing_summary"] = metadata.get("timing_summary", {})
+            step_run.metadata["runtime_timings"] = metadata.get("timings", [])
+            if metadata.get("errors"):
+                step_run.metadata["runtime_errors"] = metadata.get("errors")
         status = getattr(state, "status")
         if status == RunStatus.COMPLETED:
             step_run.status = StepRunStatus.COMPLETED

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from typing import Any
 
 from packages.runtime.bootstrap import build_runtime, build_llm
@@ -262,7 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser = subparsers.add_parser("chat", help="Run one turn or an interactive multi-turn chat")
     chat_parser.add_argument("--provider", choices=["mock", "openai_compatible"], default="mock")
     chat_parser.add_argument("--user-id", default="demo-user-1")
-    chat_parser.add_argument("--session-id", default="demo-session-3")
+    chat_parser.add_argument("--session-id", default="demo-session-4")
     chat_parser.add_argument("--max-tool-calls", type=int, default=None, help="覆盖最大工具调用次数（默认 20）")
     chat_parser.add_argument("message", nargs="?")
 
@@ -313,7 +314,17 @@ def main() -> None:
         "show-memory": run_show_memory,
         "plan": run_plan,
     }
-    asyncio.run(handlers[args.command](args))
+    try:
+        asyncio.run(handlers[args.command](args))
+    except json.JSONDecodeError as exc:
+        print(f"JSON parse error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        raise SystemExit(130)
+    except Exception as exc:
+        print(f"command failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

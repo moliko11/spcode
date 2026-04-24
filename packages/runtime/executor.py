@@ -147,11 +147,42 @@ class ToolExecutor:
         self.event_bus = event_bus
 
     async def execute(self, state: AgentState, call: ToolCall) -> ToolResult:
-        spec = self.registry.get_spec(call.tool_name)
-        tool = self.registry.get_tool(call.tool_name)
-        self.guardrail_engine.validate_tool_args(call.tool_name, call.arguments)
-        self.permission_controller.check_tool_permission(state, spec)
-        await self.approval_controller.require_approval_if_needed(spec, call)
+        start = time.time()
+        try:
+            spec = self.registry.get_spec(call.tool_name)
+            tool = self.registry.get_tool(call.tool_name)
+            self.guardrail_engine.validate_tool_args(call.tool_name, call.arguments)
+            self.permission_controller.check_tool_permission(state, spec)
+            await self.approval_controller.require_approval_if_needed(spec, call)
+        except HumanInterventionRequired:
+            raise
+        except Exception as exc:
+            result = ToolResult(
+                call_id=call.call_id,
+                tool_name=call.tool_name,
+                ok=False,
+                error=str(exc),
+                latency_ms=int((time.time() - start) * 1000),
+                metadata={"error_type": type(exc).__name__, "stage": "tool_preflight"},
+                retry_count=0,
+                approved_by=call.metadata.get("approved_by"),
+            )
+            await self.event_bus.publish(
+                AgentEvent(
+                    run_id=state.run_id,
+                    event_type=EventType.TOOL_FAILED,
+                    ts=time.time(),
+                    step=state.step,
+                    payload={
+                        "tool_name": call.tool_name,
+                        "ok": False,
+                        "latency_ms": result.latency_ms,
+                        "error": result.error,
+                        "stage": "tool_preflight",
+                    },
+                )
+            )
+            return result
 
         if call.idempotency_key and spec.cache_policy != "none":
             cached = self.idempotency_store.get(call.idempotency_key)
@@ -187,7 +218,6 @@ class ToolExecutor:
         def _retryable(exc: Exception) -> bool:
             return not isinstance(exc, (GuardrailViolation, PermissionDenied, HumanInterventionRequired, ValueError))
 
-        start = time.time()
         try:
             result = await self.retry_policy.run(_invoke_once, retryable=_retryable, max_retries=spec.max_retries)
             result.latency_ms = int((time.time() - start) * 1000)

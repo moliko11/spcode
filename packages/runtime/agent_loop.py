@@ -37,6 +37,7 @@ from .models import (
 from packages.memory.compaction import CompactionPipeline
 from .registry import ToolRegistry
 from .store import FileCheckpointStore, FileSessionStore
+from .timing import elapsed_ms, now, record_timing
 
 
 class AgentRuntime:
@@ -75,21 +76,33 @@ class AgentRuntime:
             raise RuntimeError(f"injected failpoint: {name}")
 
     async def chat(self, user_id: str, session_id: str, message: str) -> AgentState:
+        run_start = now()
         self.guardrail_engine.validate_user_input(message)
+        session_start = now()
         previous = await self.session_store.load_messages(session_id)
         await self.session_store.append_message(session_id, "user", message)
+        session_io_ms = elapsed_ms(session_start)
         recall_text: str | None = None
+        memory_recall_ms = 0
+        memory_error: dict[str, Any] | None = None
         if self.memory_manager is not None:
-            recall_pack = await self.memory_manager.recall(message, user_id)
-            if recall_pack.injected_text:
-                recall_text = recall_pack.injected_text
-            await self.event_bus.publish(AgentEvent(
-                run_id="",
-                event_type=EventType.MEMORY_RECALLED,
-                ts=time.time(),
-                step=0,
-                payload={"items": len(recall_pack.items), "query": message[:80]},
-            ))
+            memory_start = now()
+            try:
+                recall_pack = await self.memory_manager.recall(message, user_id)
+            except Exception as exc:
+                memory_recall_ms = elapsed_ms(memory_start)
+                memory_error = {"type": type(exc).__name__, "message": str(exc), "stage": "memory_recall"}
+            else:
+                memory_recall_ms = elapsed_ms(memory_start)
+                if recall_pack.injected_text:
+                    recall_text = recall_pack.injected_text
+                await self.event_bus.publish(AgentEvent(
+                    run_id="",
+                    event_type=EventType.MEMORY_RECALLED,
+                    ts=time.time(),
+                    step=0,
+                    payload={"items": len(recall_pack.items), "query": message[:80], "duration_ms": memory_recall_ms},
+                ))
         state = AgentState(
             run_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -100,6 +113,11 @@ class AgentRuntime:
             conversation=previous + [SessionMessage(role="user", content=message)],
             metadata={"tool_ledger": {}, "loaded_tools": list(DEFAULT_LOADED_TOOL_NAMES), "recall_text": recall_text},
         )
+        record_timing(state.metadata, "session_io_ms", session_io_ms)
+        if self.memory_manager is not None:
+            record_timing(state.metadata, "memory_recall_ms", memory_recall_ms)
+        if memory_error is not None:
+            state.metadata.setdefault("errors", []).append(memory_error)
         state.runtime_messages = [serialize_message(m) for m in self.message_builder.build_initial_messages(state)]
         await self.event_bus.publish(
             AgentEvent(
@@ -112,21 +130,13 @@ class AgentRuntime:
         )
         await self._save_checkpoint(state)
         try:
-            return await self._continue(state)
+            result = await self._continue(state)
+            self._refresh_total_timing(result, run_start)
+            await self._save_checkpoint(result)
+            return result
         except Exception as exc:
-            state.status = RunStatus.FAILED
-            state.failure_reason = f"unhandled error: {exc}"
-            state.phase = Phase.COMPLETED
-            state.updated_at = time.time()
-            await self.event_bus.publish(AgentEvent(
-                run_id=state.run_id,
-                event_type=EventType.RUN_COMPLETED,
-                ts=time.time(),
-                step=state.step,
-                payload={"final_output": None, "failure_reason": state.failure_reason},
-            ))
-            await self._save_checkpoint(state)
-            raise
+            await self._mark_failed(state, exc, run_start)
+            return state
 
     async def restore(self, run_id: str) -> AgentState:
         state = self.checkpoint_store.load(run_id)
@@ -138,6 +148,7 @@ class AgentRuntime:
         return state
 
     async def resume(self, run_id: str, human_decision: dict[str, Any] | None = None) -> AgentState:
+        run_start = now()
         state = await self.restore(run_id)
         if state.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}:
             return state
@@ -198,21 +209,13 @@ class AgentRuntime:
         )
         await self._save_checkpoint(state)
         try:
-            return await self._continue(state)
+            result = await self._continue(state)
+            self._refresh_total_timing(result, run_start)
+            await self._save_checkpoint(result)
+            return result
         except Exception as exc:
-            state.status = RunStatus.FAILED
-            state.failure_reason = f"unhandled error: {exc}"
-            state.phase = Phase.COMPLETED
-            state.updated_at = time.time()
-            await self.event_bus.publish(AgentEvent(
-                run_id=state.run_id,
-                event_type=EventType.RUN_COMPLETED,
-                ts=time.time(),
-                step=state.step,
-                payload={"final_output": None, "failure_reason": state.failure_reason},
-            ))
-            await self._save_checkpoint(state)
-            raise
+            await self._mark_failed(state, exc, run_start)
+            return state
 
     async def orchestrate(self, user_id: str, session_id: str, goal: str, max_turns: int = 3) -> OrchestrationResult:
         state = await self.chat(user_id=user_id, session_id=session_id, message=goal)
@@ -233,7 +236,9 @@ class AgentRuntime:
             if state.phase == Phase.DECIDING:
                 # Phase B: compaction before model call
                 _stats_before = state.metadata.get("compaction_stats", {})
+                compaction_start = now()
                 await self.compaction_pipeline.prepare(state)
+                record_timing(state.metadata, "compaction_ms", elapsed_ms(compaction_start), step=state.step)
                 _stats_after = state.metadata.get("compaction_stats", {})
                 if _stats_after.get("auto_deleted_tokens", 0) > _stats_before.get("auto_deleted_tokens", 0):
                     await self.event_bus.publish(AgentEvent(
@@ -253,8 +258,18 @@ class AgentRuntime:
                 # rebuild runtime_messages after compaction
                 runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
                 await self.event_bus.publish(AgentEvent(run_id=state.run_id, event_type=EventType.STEP_STARTED, ts=time.time(), step=state.step))
+                model_start = now()
                 response = await self.llm_client.invoke(runtime_messages, tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)))
+                model_ms = elapsed_ms(model_start)
                 content, tool_calls = self.llm_client.extract_content_and_tool_calls(response)
+                record_timing(
+                    state.metadata,
+                    "model_invoke_ms",
+                    model_ms,
+                    step=state.step,
+                    tool_calls=len(tool_calls),
+                    model_name=self.llm_client.model_name,
+                )
                 await self.event_bus.publish(
                     AgentEvent(
                         run_id=state.run_id,
@@ -326,9 +341,11 @@ class AgentRuntime:
                                 ts=time.time(), step=state.step,
                                 payload={"tool_name": bc.tool_name, "arguments": bc.arguments},
                             ))
+                        batch_start = now()
                         results = await asyncio.gather(*[
                             self.tool_executor.execute(state, bc) for bc in batch_calls
                         ])
+                        record_timing(state.metadata, "tool_batch_ms", elapsed_ms(batch_start), step=state.step, count=len(batch_calls))
                         for bc, br in zip(batch_calls, results):
                             state.tool_results.append(br)
                             runtime_messages.append(ToolMessage(
@@ -389,9 +406,11 @@ class AgentRuntime:
                         payload={"tool_name": ac.tool_name, "arguments": ac.arguments},
                     ))
                 state.status = RunStatus.TOOL_RUNNING
+                batch_start = now()
                 all_results = await asyncio.gather(*[
                     self.tool_executor.execute(state, ac) for ac in all_calls
                 ])
+                record_timing(state.metadata, "tool_batch_ms", elapsed_ms(batch_start), step=state.step, count=len(all_calls))
                 state.status = RunStatus.RUNNING
                 for ac, ar in zip(all_calls, all_results):
                     state.tool_results.append(ar)
@@ -421,7 +440,9 @@ class AgentRuntime:
                 state.status = RunStatus.TOOL_RUNNING
                 try:
                     self._hit_failpoint("before_tool_execute")
+                    tool_start = now()
                     result = await self.tool_executor.execute(state, call)
+                    record_timing(state.metadata, "tool_pending_ms", elapsed_ms(tool_start), step=state.step, tool_name=call.tool_name)
                 except HumanInterventionRequired as exc:
                     state.status = RunStatus.WAITING_HUMAN
                     state.phase = Phase.WAITING_HUMAN
@@ -513,6 +534,7 @@ class AgentRuntime:
         await self.event_bus.publish(AgentEvent(run_id=state.run_id, event_type=EventType.CHECKPOINT_SAVED, ts=time.time(), step=state.step))
 
     async def _finalize(self, state: AgentState) -> None:
+        finalize_start = now()
         await self._save_checkpoint(state)
         await self.event_bus.publish(
             AgentEvent(
@@ -523,13 +545,60 @@ class AgentRuntime:
                 payload={"final_output": state.final_output},
             )
         )
-        await self.session_store.append_message(state.session_id, "assistant", state.final_output or "")
+        try:
+            await self.session_store.append_message(state.session_id, "assistant", state.final_output or "")
+        except Exception as exc:
+            state.metadata.setdefault("errors", []).append(
+                {"type": type(exc).__name__, "message": str(exc), "stage": "session_append_assistant"}
+            )
         if self.memory_manager is not None:
-            entries = await self.memory_manager.remember_run(state)
-            await self.event_bus.publish(AgentEvent(
-                run_id=state.run_id,
-                event_type=EventType.MEMORY_STORED,
-                ts=time.time(),
-                step=state.step,
-                payload={"stored": len(entries)},
-            ))
+            memory_start = now()
+            try:
+                entries = await self.memory_manager.remember_run(state)
+            except Exception as exc:
+                record_timing(state.metadata, "memory_store_ms", elapsed_ms(memory_start), stored=0)
+                state.metadata.setdefault("errors", []).append(
+                    {"type": type(exc).__name__, "message": str(exc), "stage": "memory_store"}
+                )
+            else:
+                record_timing(state.metadata, "memory_store_ms", elapsed_ms(memory_start), stored=len(entries))
+                await self.event_bus.publish(AgentEvent(
+                    run_id=state.run_id,
+                    event_type=EventType.MEMORY_STORED,
+                    ts=time.time(),
+                    step=state.step,
+                    payload={"stored": len(entries)},
+                ))
+        record_timing(state.metadata, "finalize_ms", elapsed_ms(finalize_start))
+
+    def _refresh_total_timing(self, state: AgentState, run_start: float) -> None:
+        total_ms = elapsed_ms(run_start)
+        summary = state.metadata.setdefault("timing_summary", {})
+        summary["total_ms"] = total_ms
+        summary["runtime_wall_ms"] = total_ms
+        summary["tool_total_ms"] = sum(result.latency_ms for result in state.tool_results)
+
+    async def _mark_failed(self, state: AgentState, exc: Exception, run_start: float) -> None:
+        state.status = RunStatus.FAILED
+        state.failure_reason = f"unhandled error: {exc}"
+        state.phase = Phase.COMPLETED
+        state.updated_at = time.time()
+        state.metadata.setdefault("errors", []).append(
+            {"type": type(exc).__name__, "message": str(exc), "step": state.step, "phase": state.phase.value}
+        )
+        self._refresh_total_timing(state, run_start)
+        await self.event_bus.publish(AgentEvent(
+            run_id=state.run_id,
+            event_type=EventType.RUN_FAILED,
+            ts=time.time(),
+            step=state.step,
+            payload={"failure_reason": state.failure_reason, "timing_summary": state.metadata.get("timing_summary", {})},
+        ))
+        await self.event_bus.publish(AgentEvent(
+            run_id=state.run_id,
+            event_type=EventType.RUN_COMPLETED,
+            ts=time.time(),
+            step=state.step,
+            payload={"final_output": None, "failure_reason": state.failure_reason},
+        ))
+        await self._save_checkpoint(state)

@@ -30,6 +30,7 @@ class StepRun:
     pending_human_request: dict[str, Any] | None = None
     started_at: float | None = None
     finished_at: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration_s(self) -> float | None:
@@ -50,6 +51,7 @@ class StepRun:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_s": self.duration_s,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -65,6 +67,7 @@ class StepRun:
             pending_human_request=data.get("pending_human_request"),
             started_at=data.get("started_at"),
             finished_at=data.get("finished_at"),
+            metadata=dict(data.get("metadata", {})),
         )
 
 
@@ -83,6 +86,7 @@ class PlanRun:
     final_output: str = ""
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +102,8 @@ class PlanRun:
             "final_output": self.final_output,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "duration_s": self.duration_s,
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -115,4 +121,11 @@ class PlanRun:
             final_output=data.get("final_output", ""),
             started_at=data.get("started_at", time.time()),
             finished_at=data.get("finished_at"),
+            metadata=dict(data.get("metadata", {})),
         )
+
+    @property
+    def duration_s(self) -> float | None:
+        if self.started_at and self.finished_at:
+            return round(self.finished_at - self.started_at, 3)
+        return None

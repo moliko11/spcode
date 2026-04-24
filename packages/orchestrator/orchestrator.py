@@ -11,6 +11,7 @@ from packages.planner.planner import Planner
 from packages.planner.scheduler import Scheduler
 from packages.planner.store import PlanStore
 from packages.runtime.agent_loop import AgentRuntime
+from packages.runtime.timing import elapsed_ms, now, record_timing
 
 from .executor import StepExecutor
 from .models import PlanRun, StepRun, StepRunStatus
@@ -50,7 +51,25 @@ class Orchestrator:
 
     async def run(self, goal: str, context: str = "") -> PlanRun:
         """生成计划并以 wave 方式并行执行所有步骤，返回 PlanRun。"""
-        plan = await self._planner.create_plan(goal, context=context)
+        plan_run = PlanRun(
+            goal=goal,
+            status="running",
+            session_id=self._session_prefix,
+            started_at=time.time(),
+        )
+        plan_start = now()
+        try:
+            plan = await self._planner.create_plan(goal, context=context)
+        except Exception as exc:
+            logger.exception("Orchestrator planner failed goal=%r", goal)
+            plan_run.status = "failed"
+            plan_run.finished_at = time.time()
+            plan_run.metadata.setdefault("errors", []).append(
+                {"type": type(exc).__name__, "message": str(exc), "stage": "planning"}
+            )
+            record_timing(plan_run.metadata, "planning_ms", elapsed_ms(plan_start))
+            return self._finalize_plan_run(plan_run)
+        record_timing(plan_run.metadata, "planning_ms", elapsed_ms(plan_start), steps=len(plan.steps))
         plan.status = PlanStatus.RUNNING
         self._plan_store.save(plan)
         logger.info(
@@ -58,13 +77,7 @@ class Orchestrator:
             plan.plan_id, len(plan.steps), goal,
         )
 
-        plan_run = PlanRun(
-            plan_id=plan.plan_id,
-            goal=goal,
-            status="running",
-            session_id=self._session_prefix,
-            started_at=time.time(),
-        )
+        plan_run.plan_id = plan.plan_id
         self._persist(plan, plan_run)
         return await self._execute_waves(plan, plan_run)
 
@@ -103,12 +116,14 @@ class Orchestrator:
             user_id=self._user_id,
             session_id=step_session_id,
         )
+        resume_start = now()
         await executor.resume(
             step_run=step_run,
             approved=approved,
             approved_by=approved_by,
             edited_arguments=edited_arguments,
         )
+        record_timing(plan_run.metadata, "resume_ms", elapsed_ms(resume_start), step_id=step.step_id)
         self._sync_step_from_run(step, step_run)
 
         if step_run.status == StepRunStatus.WAITING_HUMAN:
@@ -262,7 +277,20 @@ class Orchestrator:
             self._persist(plan, plan_run)
 
             # 并行执行本 wave
-            await asyncio.gather(*tasks)
+            wave_start = now()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            record_timing(plan_run.metadata, "wave_ms", elapsed_ms(wave_start), wave_index=wave_index, count=len(tasks))
+            for index, result in enumerate(results):
+                if not isinstance(result, Exception):
+                    continue
+                step, step_run = wave_pairs[index]
+                logger.exception("Wave %d step=%s failed with uncaught exception", wave_index, step.step_id, exc_info=result)
+                step_run.status = StepRunStatus.FAILED
+                step_run.error = str(result)
+                step_run.finished_at = time.time()
+                step_run.metadata.setdefault("errors", []).append(
+                    {"type": type(result).__name__, "message": str(result), "stage": "wave"}
+                )
 
             # 处理本 wave 结果
             first_waiting: tuple[TaskStep, StepRun] | None = None
@@ -328,6 +356,14 @@ class Orchestrator:
     def _finalize_plan_run(self, plan_run: PlanRun) -> PlanRun:
         if plan_run.status in {"completed", "failed"}:
             plan_run.finished_at = time.time()
+        if plan_run.finished_at is not None:
+            summary = plan_run.metadata.setdefault("timing_summary", {})
+            summary["total_s"] = round(plan_run.finished_at - plan_run.started_at, 3)
+            summary["step_total_s"] = round(
+                sum(sr.duration_s or 0 for sr in plan_run.step_runs),
+                3,
+            )
+            summary["step_count"] = len(plan_run.step_runs)
         plan_run.final_output = self._summarize(plan_run)
         self._plan_run_store.save(plan_run)
         return plan_run
