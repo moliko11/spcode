@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterator, Literal
 
 import yaml
 from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
@@ -52,6 +53,29 @@ class DeepSeekChatOpenAI(ChatOpenAI):
             if value is not None:
                 return str(value)
         return ""
+
+    def _create_chat_result(self, response: dict | Any, generation_info: dict | None = None) -> ChatResult:
+        response_dict = (
+            response
+            if isinstance(response, dict)
+            else response.model_dump(exclude={"choices": {"__all__": {"message": {"parsed"}}}})
+        )
+        result = super()._create_chat_result(response, generation_info)
+        choices = response_dict.get("choices") or []
+        for generation, choice in zip(result.generations, choices):
+            message = generation.message
+            if not isinstance(message, AIMessage):
+                continue
+            raw_message = choice.get("message") or {}
+            reasoning_content = raw_message.get("reasoning_content")
+            if reasoning_content is None:
+                reasoning_content = raw_message.get("reasoning")
+            if reasoning_content is None:
+                continue
+            value = str(reasoning_content)
+            message.additional_kwargs["reasoning_content"] = value
+            message.response_metadata["reasoning_content"] = value
+        return result
 
 
 class ModelConfig(BaseModel):

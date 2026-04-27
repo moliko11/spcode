@@ -193,6 +193,44 @@ def test_deepseek_payload_adds_empty_reasoning_content_when_missing() -> None:
     assert payload["messages"][1]["reasoning_content"] == ""
 
 
+def test_deepseek_response_preserves_reasoning_content() -> None:
+    model = m.DeepSeekChatOpenAI(
+        model="deepseek-v4-pro",
+        base_url="https://api.deepseek.com/v1",
+        api_key="k",
+    )
+    response = {
+        "id": "chatcmpl-test",
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "actual trace",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "web_search", "arguments": "{\"query\":\"x\"}"},
+                        }
+                    ],
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    result = model._create_chat_result(response)
+    message = result.generations[0].message
+
+    assert isinstance(message, AIMessage)
+    assert message.additional_kwargs["reasoning_content"] == "actual trace"
+    assert message.response_metadata["reasoning_content"] == "actual trace"
+
+
 def test_create_model_loader_uses_chain_from_env(monkeypatch, tmp_path):
     monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
