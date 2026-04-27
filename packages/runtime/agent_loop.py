@@ -19,6 +19,7 @@ from .message_builder import MessageBuilder
 from .models import (
     AgentEvent,
     AgentState,
+    EventKind,
     EventType,
     HumanInterventionRequired,
     OrchestrationResult,
@@ -35,6 +36,10 @@ from .models import (
     serialize_message,
     to_jsonable,
 )
+
+
+class RunCancelled(Exception):
+    """外部通过 cancel() 主动取消 run 时抛出。"""
 from packages.memory.compaction import CompactionPipeline
 from .registry import ToolRegistry
 from .store import FileCheckpointStore, FileSessionStore
@@ -68,6 +73,8 @@ class AgentRuntime:
         self.idempotency_store = idempotency_store
         self.memory_manager = None
         self.compaction_pipeline = CompactionPipeline()
+        # A6: run_id → asyncio.Event，用于外部主动取消
+        self._cancel_events: dict[str, asyncio.Event] = {}
 
     def set_failpoint(self, name: str | None) -> None:
         self.failpoint = name
@@ -75,6 +82,54 @@ class AgentRuntime:
     def _hit_failpoint(self, name: str) -> None:
         if self.failpoint == name:
             raise RuntimeError(f"injected failpoint: {name}")
+
+    def cancel(self, run_id: str) -> bool:
+        """从外部取消一个正在运行的 run（线程安全，返回是否找到该 run）。"""
+        ev = self._cancel_events.get(run_id)
+        if ev:
+            ev.set()
+            return True
+        return False
+
+    async def fork(self, run_id: str, from_step: int | None = None) -> str:
+        """
+        从已有 checkpoint 分叉一个新 run。
+        from_step=None 表示从最新检查点分叉；返回新 run_id。
+        """
+        state = self.checkpoint_store.load(run_id)
+        if state is None:
+            raise ValueError(f"checkpoint not found: {run_id}")
+        new_run_id = str(uuid.uuid4())
+        new_state = AgentState(
+            run_id=new_run_id,
+            user_id=state.user_id,
+            task=state.task,
+            session_id=state.session_id,
+            status=RunStatus.IDLE,
+            phase=Phase.DECIDING,
+            step=from_step if from_step is not None else state.step,
+            history=list(state.history[: (from_step or state.step)]),
+            tool_results=list(state.tool_results),
+            runtime_messages=list(state.runtime_messages),
+            conversation=list(state.conversation),
+            metadata={
+                **state.metadata,
+                "forked_from": run_id,
+                "fork_step": from_step or state.step,
+            },
+        )
+        self.checkpoint_store.save(new_state)
+        await self.event_bus.publish(
+            AgentEvent(
+                run_id=new_run_id,
+                event_type=EventType.RUN_STARTED,
+                event_kind=EventKind.run_forked.value,
+                ts=time.time(),
+                step=new_state.step,
+                payload={"parent_run_id": run_id, "from_step": from_step or state.step},
+            )
+        )
+        return new_run_id
 
     async def chat(self, user_id: str, session_id: str, message: str) -> AgentState:
         run_start = now()
@@ -129,15 +184,35 @@ class AgentRuntime:
                 payload={"task": message, "session_id": session_id},
             )
         )
+        cancel_ev = asyncio.Event()
+        self._cancel_events[state.run_id] = cancel_ev
         await self._save_checkpoint(state)
         try:
-            result = await self._continue(state)
+            result = await self._continue(state, cancel_ev)
             self._refresh_total_timing(result, run_start)
             await self._save_checkpoint(result)
             return result
+        except RunCancelled:
+            state.status = RunStatus.CANCELLED
+            state.phase = Phase.COMPLETED
+            state.updated_at = time.time()
+            await self.event_bus.publish(
+                AgentEvent(
+                    run_id=state.run_id,
+                    event_type=EventType.RUN_FAILED,
+                    event_kind=EventKind.run_cancelled.value,
+                    ts=time.time(),
+                    step=state.step,
+                    payload={"reason": "cancelled"},
+                )
+            )
+            await self._save_checkpoint(state)
+            return state
         except Exception as exc:
             await self._mark_failed(state, exc, run_start)
             return state
+        finally:
+            self._cancel_events.pop(state.run_id, None)
 
     async def restore(self, run_id: str) -> AgentState:
         state = self.checkpoint_store.load(run_id)
@@ -208,15 +283,35 @@ class AgentRuntime:
                 payload={"phase": state.phase.value},
             )
         )
+        cancel_ev = asyncio.Event()
+        self._cancel_events[state.run_id] = cancel_ev
         await self._save_checkpoint(state)
         try:
-            result = await self._continue(state)
+            result = await self._continue(state, cancel_ev)
             self._refresh_total_timing(result, run_start)
             await self._save_checkpoint(result)
             return result
+        except RunCancelled:
+            state.status = RunStatus.CANCELLED
+            state.phase = Phase.COMPLETED
+            state.updated_at = time.time()
+            await self.event_bus.publish(
+                AgentEvent(
+                    run_id=state.run_id,
+                    event_type=EventType.RUN_FAILED,
+                    event_kind=EventKind.run_cancelled.value,
+                    ts=time.time(),
+                    step=state.step,
+                    payload={"reason": "cancelled by approval rejection"},
+                )
+            )
+            await self._save_checkpoint(state)
+            return state
         except Exception as exc:
             await self._mark_failed(state, exc, run_start)
             return state
+        finally:
+            self._cancel_events.pop(state.run_id, None)
 
     async def orchestrate(self, user_id: str, session_id: str, goal: str, max_turns: int = 3) -> OrchestrationResult:
         state = await self.chat(user_id=user_id, session_id=session_id, message=goal)
@@ -228,8 +323,11 @@ class AgentRuntime:
         )
         return OrchestrationResult(turns=[turn], completed=state.status == RunStatus.COMPLETED, final_output=turn.output)
 
-    async def _continue(self, state: AgentState) -> AgentState:
+    async def _continue(self, state: AgentState, cancel_ev: asyncio.Event | None = None) -> AgentState:
         while True:
+            # A6: 每步循环入口检查外部取消信号
+            if cancel_ev is not None and cancel_ev.is_set():
+                raise RunCancelled("run cancelled externally")
             state.updated_at = time.time()
             self.budget_controller.check(state)
             runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
