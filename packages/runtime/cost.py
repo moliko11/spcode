@@ -5,7 +5,7 @@ from typing import Any
 
 
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    "qwen3": {"input_per_1m": 0.0, "output_per_1m": 0.0},
+    "qwen3": {"input_per_1m": 0.0, "output_per_1m": 0.0, "note": "本地模型免费"},
     "qwen3.5-plus": {"input_per_1m": 0.8, "output_per_1m": 2.0},
     "qwen3.5-max": {"input_per_1m": 2.0, "output_per_1m": 6.0},
     "deepseek-chat": {"input_per_1m": 1.0, "output_per_1m": 2.0},
@@ -54,10 +54,13 @@ class CostTracker:
         total_usage = TokenUsage()
         total_cny = 0.0
         total_usd = 0.0
+        model_names: set[str] = set()
         for r in self.records:
             total_usage = total_usage + r.usage
             total_cny += r.cost_cny
             total_usd += r.cost_usd
+            if r.model_name:
+                model_names.add(r.model_name)
         return {
             "input_tokens": total_usage.input_tokens,
             "output_tokens": total_usage.output_tokens,
@@ -65,16 +68,22 @@ class CostTracker:
             "cost_cny": round(total_cny, 6),
             "cost_usd": round(total_usd, 6),
             "model_calls": len(self.records),
+            "model_name": ",".join(sorted(model_names)) if model_names else "unknown",
         }
 
     def format_summary(self) -> str:
         t = self.total()
         if t["total_tokens"] == 0:
             return ""
+        pricing = MODEL_PRICING.get(t.get("model_name", ""), {})
+        is_free = pricing.get("input_per_1m", 0) == 0 and pricing.get("output_per_1m", 0) == 0
         lines = [
             f"💰 token用量: input={t['input_tokens']}, output={t['output_tokens']}, total={t['total_tokens']}",
-            f"💰 花费: ¥{t['cost_cny']:.6f} / ${t['cost_usd']:.6f} ({t['model_calls']}次模型调用)",
         ]
+        if is_free:
+            lines.append(f"💰 花费: 本地模型免费 ({t['model_calls']}次调用)")
+        else:
+            lines.append(f"💰 花费: ¥{t['cost_cny']:.6f} / ${t['cost_usd']:.6f} ({t['model_calls']}次调用)")
         return "\n".join(lines)
 
 

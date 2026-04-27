@@ -21,6 +21,7 @@ def _find_waiting_step(plan_run: Any) -> Any | None:
 
 
 def _format_cost(state_or_metadata: Any) -> str:
+    from packages.runtime.cost import MODEL_PRICING
     metadata = state_or_metadata if isinstance(state_or_metadata, dict) else getattr(state_or_metadata, "metadata", {})
     if not isinstance(metadata, dict):
         return ""
@@ -35,6 +36,11 @@ def _format_cost(state_or_metadata: Any) -> str:
     cost_cny = cost_summary.get("cost_cny", 0.0)
     cost_usd = cost_summary.get("cost_usd", 0.0)
     calls = cost_summary.get("model_calls", 0)
+    model_name = cost_summary.get("model_name", "unknown")
+    pricing = MODEL_PRICING.get(model_name.split(",")[0] if model_name else "", {})
+    is_free = pricing.get("input_per_1m", 0) == 0 and pricing.get("output_per_1m", 0) == 0
+    if is_free:
+        return f"💰 token: input={input_t}, output={output_t}, total={total_tokens} | 本地模型免费 ({calls}次调用)"
     return f"💰 token: input={input_t}, output={output_t}, total={total_tokens} | 花费: ¥{cost_cny:.6f} / ${cost_usd:.6f} ({calls}次调用)"
 
 
