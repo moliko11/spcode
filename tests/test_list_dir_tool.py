@@ -9,15 +9,21 @@ import pytest
 
 class TestListDirTool:
     def test_list_empty_directory(self, tmp_path: Path) -> None:
-        from examples.example4 import ListDirTool, WORKSPACE_DIR
+        from examples.example4 import ListDirTool
+        import examples.example4 as m
 
-        tool = ListDirTool()
+        original_workspace = m.WORKSPACE_DIR
+        m.WORKSPACE_DIR = tmp_path
+        try:
+            tool = ListDirTool()
 
-        async def run_test() -> str:
-            return await tool.arun({"path": "."})
+            async def run_test() -> str:
+                return await tool.arun({"path": "."})
 
-        result = asyncio.run(run_test())
-        assert result == ""
+            result = asyncio.run(run_test())
+            assert result == ""
+        finally:
+            m.WORKSPACE_DIR = original_workspace
 
     def test_list_directory_with_files(self, tmp_path: Path) -> None:
         from examples.example4 import ListDirTool, WORKSPACE_DIR

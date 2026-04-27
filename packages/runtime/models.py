@@ -300,11 +300,17 @@ def serialize_message(msg: Any) -> dict[str, Any]:
     if isinstance(msg, ToolMessage):
         return {"type": "tool", "content": msg.content, "tool_call_id": msg.tool_call_id}
     if isinstance(msg, AIMessage):
+        additional_kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
+        response_metadata = getattr(msg, "response_metadata", {}) or {}
+        if isinstance(response_metadata, dict):
+            for key in ("reasoning_content", "reasoning"):
+                if key in response_metadata and key not in additional_kwargs:
+                    additional_kwargs[key] = response_metadata[key]
         return {
             "type": "ai",
             "content": msg.content,
             "tool_calls": getattr(msg, "tool_calls", []) or [],
-            "additional_kwargs": getattr(msg, "additional_kwargs", {}) or {},
+            "additional_kwargs": additional_kwargs,
         }
     raise TypeError(f"unsupported message type: {type(msg).__name__}")
 

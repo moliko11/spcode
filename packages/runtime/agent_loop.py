@@ -333,7 +333,11 @@ class AgentRuntime:
                         ]
                         # 裁剪 AIMessage 只含这批 tool_calls（转换为 LangChain args 格式）
                         lc_batch = [{"id": rc["id"], "name": rc["name"], "args": rc["arguments"], "type": "tool_call"} for rc in batch]
-                        trimmed = AIMessage(content=content or "", tool_calls=lc_batch)
+                        trimmed = AIMessage(
+                            content=content or "",
+                            tool_calls=lc_batch,
+                            additional_kwargs=self._assistant_reasoning_kwargs(response),
+                        )
                         runtime_messages[-1] = trimmed
                         for bc in batch_calls:
                             await self.event_bus.publish(AgentEvent(
@@ -370,7 +374,11 @@ class AgentRuntime:
                     )
                     # 只含这一个 tool_call 的 AIMessage（转换为 LangChain args 格式）
                     _pr = tool_calls[approval_idx]
-                    approval_ai_msg = AIMessage(content="", tool_calls=[{"id": _pr["id"], "name": _pr["name"], "args": _pr["arguments"], "type": "tool_call"}])
+                    approval_ai_msg = AIMessage(
+                        content="",
+                        tool_calls=[{"id": _pr["id"], "name": _pr["name"], "args": _pr["arguments"], "type": "tool_call"}],
+                        additional_kwargs=self._assistant_reasoning_kwargs(response),
+                    )
                     if batch:
                         # batch 已执行并有对应 ToolMessage，approval_ai_msg 作为新轮次追加
                         runtime_messages.append(approval_ai_msg)
@@ -528,6 +536,21 @@ class AgentRuntime:
             if isinstance(name, str) and item.get("load") and self.registry.has_tool(name) and name not in loaded:
                 loaded.append(name)
         state.metadata["loaded_tools"] = loaded
+
+    def _assistant_reasoning_kwargs(self, response: Any) -> dict[str, Any]:
+        additional_kwargs = getattr(response, "additional_kwargs", {}) or {}
+        if not isinstance(additional_kwargs, dict):
+            additional_kwargs = {}
+        preserved = {}
+        for key in ("reasoning_content", "reasoning"):
+            if key in additional_kwargs:
+                preserved[key] = additional_kwargs[key]
+        response_metadata = getattr(response, "response_metadata", {}) or {}
+        if isinstance(response_metadata, dict):
+            for key in ("reasoning_content", "reasoning"):
+                if key in response_metadata and key not in preserved:
+                    preserved[key] = response_metadata[key]
+        return preserved
 
     async def _save_checkpoint(self, state: AgentState) -> None:
         self.checkpoint_store.save(state)

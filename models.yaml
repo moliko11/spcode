@@ -1,0 +1,30 @@
+models:
+  - label: qwen_local
+    model_url: "http://10.8.160.47:9998/v1"
+    model_name: "qwen3"
+    api_key: "EMPTY"
+    temperature: 0.5
+    max_tokens: 8000
+    timeout: 60
+    max_retries: 3
+    priority: 2
+
+  - label: deepseek_cloud
+    model_url: "https://api.deepseek.com/v1"
+    model_name: "deepseek-v4-pro"
+    api_key: "${DEEPSEEK_API_KEY}"
+    temperature: 0.5
+    max_tokens: 80000
+    timeout: 60
+    max_retries: 3
+    priority: 1
+
+  - label: qwen_cloud
+    model_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model_name: "qwen3.5-plus"
+    api_key: "${QWEN_API_KEY}"
+    temperature: 0.5
+    max_tokens: 8000
+    timeout: 60
+    max_retries: 3
+    priority: 3

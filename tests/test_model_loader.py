@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 
 import packages.model_loader as m
 
@@ -81,6 +82,7 @@ def test_fallback_chat_model_uses_next_backend_when_previous_fails(monkeypatch):
         return FakeBackend(responses=[{"provider": kwargs["model"]}])
 
     monkeypatch.setattr(m, "ChatOpenAI", fake_chat_openai)
+    monkeypatch.setattr(m, "DeepSeekChatOpenAI", fake_chat_openai)
 
     model = m.FallbackChatModel(
         [
@@ -95,17 +97,115 @@ def test_fallback_chat_model_uses_next_backend_when_previous_fails(monkeypatch):
     assert created == ["qwen-first", "deepseek-second"]
 
 
-def test_create_model_loader_uses_chain_from_env(monkeypatch):
+def test_deepseek_messages_get_reasoning_content(monkeypatch):
+    captured = []
+
+    class CaptureBackend(FakeBackend):
+        def invoke(self, messages):
+            captured.append(messages)
+            return {"ok": True}
+
+    monkeypatch.setattr(m, "ChatOpenAI", lambda **kwargs: CaptureBackend())
+    monkeypatch.setattr(m, "DeepSeekChatOpenAI", lambda **kwargs: CaptureBackend())
+    model = m.FallbackChatModel(
+        [
+            m.ModelConfig(
+                model_url="https://api.deepseek.com/v1",
+                model_name="deepseek-v4-pro",
+                api_key=m.SecretStr("k"),
+                label="deepseek_cloud",
+            )
+        ]
+    )
+    message = AIMessage(content="", tool_calls=[{"id": "call_1", "name": "tool", "args": {}}])
+
+    model.invoke([message])
+
+    assert captured[0][0].additional_kwargs["reasoning_content"] == ""
+
+
+def test_non_deepseek_messages_strip_reasoning_content(monkeypatch):
+    captured = []
+
+    class CaptureBackend(FakeBackend):
+        def invoke(self, messages):
+            captured.append(messages)
+            return {"ok": True}
+
+    monkeypatch.setattr(m, "ChatOpenAI", lambda **kwargs: CaptureBackend())
+    model = m.FallbackChatModel(
+        [
+            m.ModelConfig(
+                model_url="http://local/v1",
+                model_name="qwen3",
+                api_key=m.SecretStr("k"),
+                label="qwen_local",
+            )
+        ]
+    )
+    message = AIMessage(
+        content="",
+        tool_calls=[{"id": "call_1", "name": "tool", "args": {}}],
+        additional_kwargs={"reasoning_content": "trace"},
+    )
+
+    model.invoke([message])
+
+    assert "reasoning_content" not in captured[0][0].additional_kwargs
+
+
+def test_deepseek_payload_includes_reasoning_content() -> None:
+    model = m.DeepSeekChatOpenAI(
+        model="deepseek-v4-pro",
+        base_url="https://api.deepseek.com/v1",
+        api_key="k",
+    )
+    messages = [
+        HumanMessage(content="hi"),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "call_1", "name": "web_search", "args": {"query": "x"}}],
+            additional_kwargs={"reasoning_content": "trace"},
+        ),
+    ]
+
+    payload = model._get_request_payload(messages)
+
+    assert payload["messages"][1]["reasoning_content"] == "trace"
+
+
+def test_deepseek_payload_adds_empty_reasoning_content_when_missing() -> None:
+    model = m.DeepSeekChatOpenAI(
+        model="deepseek-v4-pro",
+        base_url="https://api.deepseek.com/v1",
+        api_key="k",
+    )
+    messages = [
+        HumanMessage(content="hi"),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "call_1", "name": "web_search", "args": {"query": "x"}}],
+        ),
+    ]
+
+    payload = model._get_request_payload(messages)
+
+    assert payload["messages"][1]["reasoning_content"] == ""
+
+
+def test_create_model_loader_uses_chain_from_env(monkeypatch, tmp_path):
     monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     monkeypatch.setenv("QWEN_MODEL", "qwen3.5-max")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v3.1")
 
+    fake_yaml = tmp_path / "nonexistent_models.yaml"
     loader = m.create_model_loader(
         model_url="http://local/v1",
         model_name="qwen3",
         api_key="EMPTY",
         temperature=0.5,
+        yaml_path=fake_yaml,
     )
 
     info = loader.get_model_info()

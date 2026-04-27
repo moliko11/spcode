@@ -1545,9 +1545,6 @@ class BudgetController:
 def build_runtime() -> AgentRuntime:
     ensure_dirs()
     loader = create_model_loader(
-        model_url=MODEL_URL,
-        model_name=MODEL_NAME,
-        api_key=API_KEY,
         temperature=TEMPERATURE,
     )
     llm = loader.load()
