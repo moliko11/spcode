@@ -480,3 +480,348 @@ Web/CLI 一定要继承当前 guardrail 和 approval 策略：
 5. 接 SSE 和 run manager，再做 React 工作台。
 
 这个顺序能先稳住后端边界，再上界面。否则 Web 会被迫直接读 `runtime_data` 或重复拼装 runtime，后续维护成本会快速升高。
+
+---
+
+## Runtime Harness 配套改造
+
+> 本节补充当前 `packages/runtime` 在支撑 Web/CLI 时的必要改造点。  
+> 按优先级分三档：**A 必改**（不改拿不到必要数据）/ **B 强烈建议**（决定 UX 上限）/ **C 可选**（预留扩展点）。  
+> 完整事件枚举、渲染表、斜杠命令和 TUI 键位见 [UI_INTERACTION_SPEC.md](./UI_INTERACTION_SPEC.md)。
+
+---
+
+### A 必改
+
+#### A1. `EventType` → `EventKind`，引入有判别式的事件载荷
+
+**位置**：`packages/runtime/models.py` L69 + `packages/runtime/events.py`
+
+**问题**：
+- 当前 `EventType` 是扁平 22 项，前端没法按"模型流/工具流/计划流/记忆流"分发
+- `AgentEvent.payload: dict` 无类型，Web TS 端只能写 `any`
+- 缺所有 streaming 类型：`model.token` / `model.thinking` / `model.tool_call_delta` / `model.usage`
+- 缺 `tool.progress`（bash 实时 stdout）、`run.cancelled`、`run.forked`
+- 没有单调 `seq`，SSE 断线重连用不了 `Last-Event-ID`
+
+**改造要点**：
+
+```python
+class EventKind(str, Enum):
+    # 命名空间式: scope.action
+    model_token           = "model.token"
+    model_thinking        = "model.thinking"
+    model_tool_call_delta = "model.tool_call_delta"
+    model_usage           = "model.usage"
+    tool_progress         = "tool.progress"
+    tool_pending_approval = "tool.pending_approval"
+    run_cancelled         = "run.cancelled"
+    run_forked            = "run.forked"
+    run_token_budget      = "run.token_budget"
+    # ...其余迁移自旧 EventType
+
+@dataclass(slots=True)
+class AgentEvent:
+    run_id: str
+    seq: int                       # 新增，EventBus 内部单调递增
+    event_kind: EventKind          # 重命名（旧 event_type 留 @property 做向后兼容）
+    ts: float
+    step: int
+    scope: Literal["run", "plan_run", "step_run", "session"] = "run"
+    scope_id: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+```
+
+旧 `event_type` 字段保留 `@property` 别名，给现有测试和 audit log 一个迁移窗口。
+
+---
+
+#### A2. `EventBus` 加 ring buffer + `seq` + 异步 fan-out
+
+**位置**：`packages/runtime/events.py`
+
+**问题**：
+- `publish` 串行 await 每个 subscriber，任一订阅者慢会卡主循环
+- 没有内存 ring buffer，SSE replay 不了历史事件
+- 没有 `seq` 计数器
+
+**改造要点**：
+
+```python
+class EventBus:
+    def __init__(self, ring_size: int = 2000) -> None:
+        self._subscribers: list[EventSubscriber] = []
+        self._ring: collections.deque[AgentEvent] = collections.deque(maxlen=ring_size)
+        self._seq = itertools.count(1)
+        # 流式订阅者的 asyncio.Queue（供 SSE 使用）
+        self._stream_queues: dict[str, list[asyncio.Queue]] = {}
+
+    async def publish(self, event: AgentEvent) -> None:
+        event.seq = next(self._seq)
+        self._ring.append(event)
+        # 同步推到内存队列（不阻塞）
+        for q in self._stream_queues.get(event.run_id, []):
+            q.put_nowait(event)
+        # 文件订阅者并发执行，不阻塞主流程
+        await asyncio.gather(*[s.handle(event) for s in self._subscribers], return_exceptions=True)
+
+    def subscribe_stream(self, run_id: str, after_seq: int = 0) -> AsyncIterator[AgentEvent]:
+        # 先 replay ring buffer 中 seq>after_seq 的事件，再切到新事件 queue
+        ...
+```
+
+`AuditSubscriber` 的写文件操作改为内部 `asyncio.Queue` + consumer task 批量 flush，不再在 `publish` 路径上同步落盘。
+
+---
+
+#### A3. `NativeToolCallingLLMClient` 接 streaming
+
+**位置**：`packages/runtime/llm_client.py`
+
+**问题**：
+- `invoke()` 是一次性 `ainvoke`，拿不到中间 token
+- `model_loader.py` 已实现 `astream`（L192/290），但 runtime 没用
+- 工具调用参数一次性返回，无渐进 JSON
+
+**改造要点**：新增 `astream_invoke`，边解析边推事件：
+
+```python
+async def astream_invoke(
+    self,
+    messages: list[Any],
+    tool_schemas: list[dict],
+    on_token: Callable[[str], Awaitable[None]],
+    on_tool_call_delta: Callable[[dict], Awaitable[None]],
+    on_thinking: Callable[[str], Awaitable[None]] | None = None,
+) -> tuple[str, list[dict], TokenUsage]:
+    bound = self._bind_tools(self.raw_llm, tool_schemas)
+    content_buf = []
+    tool_calls_buf: dict[int, dict] = {}
+    async for chunk in bound.astream(messages):
+        if delta := getattr(chunk, "content", ""):
+            content_buf.append(delta)
+            await on_token(delta)
+        for tc_chunk in getattr(chunk, "tool_call_chunks", []) or []:
+            idx = tc_chunk.get("index", 0)
+            buf = tool_calls_buf.setdefault(idx, {"name": "", "args_text": ""})
+            buf["name"] += tc_chunk.get("name", "")
+            buf["args_text"] += tc_chunk.get("args", "")
+            await on_tool_call_delta({"index": idx, **tc_chunk})
+        if on_thinking:
+            extra = getattr(chunk, "additional_kwargs", {}) or {}
+            if r := extra.get("reasoning_content"):
+                await on_thinking(r)
+    # 收尾：把累积 args_text 解析为 dict，构造 tool_calls list
+    ...
+```
+
+`AgentRuntime._continue` 改为调 `astream_invoke`，回调里 `event_bus.publish(model.token / model.thinking / model.tool_call_delta)`。旧 `invoke` 路径保留，供没有 streaming 能力的 provider fallback。
+
+---
+
+#### A4. `ToolResult` 增加结构化渲染字段
+
+**位置**：`packages/runtime/models.py` L118
+
+**问题**：`output: str` 是纯文本，前端拿不到结构化数据，无法做 diff 视图、grep 分组、链接卡片。
+
+**改造要点**：
+
+```python
+@dataclass(slots=True)
+class ToolResult:
+    # ...原有字段保持不变
+    render_kind: str = "text"
+    # text | diff | code | grep | web | terminal | todo | plan | json | error
+    render_payload: dict[str, Any] = field(default_factory=dict)
+    # diff:   {"path": "...", "hunks": [...]}
+    # grep:   {"matches": [{"path","line","text"}], "total": N}
+    # web:    {"url","title","favicon","summary"}
+    # terminal: {"session_id", "stream_url"}
+    # todo:   {"items": [{"id","title","done"}]}
+    truncated: bool = False
+    artifact_id: str | None = None   # 大输出落盘后的引用 id
+```
+
+各工具 `arun` 在返回前填好 `render_kind` + `render_payload`。`FileEditTool` 已能拿到 old/new，直接组装 hunks 即可。
+
+---
+
+#### A5. `ToolExecutor` 支持流式进度回调
+
+**位置**：`packages/runtime/executor.py`
+
+**问题**：`execute` 只在开始/结束发事件，bash 的中间 stdout 拿不到。
+
+**改造要点**：给工具协议加可选 `on_progress` 回调：
+
+```python
+class StreamingTool(Protocol):
+    async def arun(
+        self,
+        arguments: dict[str, Any],
+        *,
+        on_progress: Callable[[dict], Awaitable[None]] | None = None,
+    ) -> ToolResult: ...
+```
+
+`ShellExecutor.run` 把 `process.communicate()` 改为按行读 `process.stdout`，每行通过 `on_progress` 推 `tool.progress` 事件。`ToolExecutor.execute` 注入回调，把 progress 转 `EventKind.tool_progress` 并 publish。
+
+---
+
+#### A6. `AgentRuntime` 加 `cancel` / `fork` API
+
+**位置**：`packages/runtime/agent_loop.py`
+
+**问题**：无法从外部中断当前 run；无法基于 checkpoint 分叉。
+
+**改造要点**：
+
+```python
+class AgentRuntime:
+    def __init__(self, ...):
+        ...
+        self._cancel_events: dict[str, asyncio.Event] = {}
+
+    async def chat(self, user_id, session_id, message):
+        cancel = asyncio.Event()
+        self._cancel_events[run_id] = cancel
+        try:
+            # 主循环每步检查: if cancel.is_set(): raise RunCancelled
+            ...
+        finally:
+            self._cancel_events.pop(run_id, None)
+
+    def cancel(self, run_id: str) -> bool:
+        ev = self._cancel_events.get(run_id)
+        if ev:
+            ev.set()
+            return True
+        return False
+
+    async def fork(self, source_run_id: str, from_step: int, new_message: str | None = None) -> AgentState:
+        ckpt = self.checkpoint_store.load(source_run_id, step=from_step)
+        # 复制 state、改 run_id、可选替换最后一条 user message，重新进入主循环
+        ...
+```
+
+新增 `RunCancelled` 异常，主循环捕获后走 `EventKind.run_cancelled` + 状态收尾，**不触发** `run_failed`。
+
+---
+
+### B 强烈建议改
+
+#### B1. `MessageBuilder` 输出消息块而非单字符串
+
+**位置**：`packages/runtime/message_builder.py`
+
+系统提示词、记忆注入、历史压缩目前拼成一段。改为返回 `list[MessageBlock]`，每块带 `kind`（`system | memory | compacted | history | user | tool_result`）和 `source_id`（对应 memory entry id 或 compaction id）。Web timeline 上 `memory.recalled` 事件才能 hover 高亮对应消息块。
+
+---
+
+#### B2. Checkpoint 加版本号 + 元数据
+
+**位置**：`packages/runtime/store.py`
+
+为支持 fork 和 Web 的"回到第 N 步" step slider：
+- 每个 checkpoint 文件头加 `schema_version`、`parent_run_id`、`step`、`created_at`、`message_digest`
+- 新增 `FileCheckpointStore.list(run_id) -> list[CheckpointMeta]`，Web 按此画 step slider
+
+---
+
+#### B3. `BudgetController` 暴露累计 usage 快照
+
+**位置**：`packages/runtime/budget.py` + `packages/runtime/cost.py`
+
+`extract_usage_from_response` 已能拿单次 usage。需补：
+- `CostTracker.snapshot(run_id) -> {prompt, completion, cache_read, cache_write, cost_usd}`
+- 每次 LLM 调用后 publish `EventKind.run_token_budget`，Web 顶栏小部件直接订阅
+
+---
+
+#### B4. `ToolRegistry` 加 schema 自描述 + 渲染提示
+
+**位置**：`packages/runtime/registry.py`
+
+`ToolSpec` 增加：
+- `default_render_kind: str`（对应 UI 渲染表）
+- `ui_category: Literal["file","search","web","shell","todo","plan","memory","mcp","skill","agent"]`
+
+`/api/tools` 直接吐这份元数据，前端工具卡片不用 hardcode 图标逻辑。
+
+---
+
+#### B5. `AuditSubscriber` 解耦出主循环
+
+**位置**：`packages/runtime/events.py` L51
+
+现在 `AuditSubscriber.handle` 在 `publish` 路径上同步写文件。token streaming 后每秒几十次写盘会拖慢事件循环。改为：
+- 内部 `asyncio.Queue` + 单独 consumer task 批量 flush
+- 进程退出前 `await consumer.aclose()` 保证不丢
+
+---
+
+#### B6. 新增 `RunManager`（放 `app_service` 层）
+
+当前 `AgentRuntime.chat` 是 await 一次跑完。Web 需要"立即返回 run_id，任务后台跑"。  
+**不改 `AgentRuntime` 本身**，在 `packages/app_service/` 新建 `RunManager`：
+
+```python
+class RunManager:
+    def __init__(self, runtime: AgentRuntime) -> None:
+        self._tasks: dict[str, asyncio.Task] = {}
+
+    async def start(self, request: ChatRunRequest) -> str:  # 返回 run_id
+        task = asyncio.create_task(self._runtime.chat(...))
+        self._tasks[run_id] = task
+        return run_id
+
+    def cancel(self, run_id: str) -> bool: ...
+    async def subscribe(self, run_id: str, after_seq: int) -> AsyncIterator[AgentEvent]: ...
+    async def wait(self, run_id: str) -> AgentState: ...
+```
+
+---
+
+#### B7. 工具大输出统一走 artifact 机制
+
+**位置**：`packages/runtime/executor.py`
+
+定义阈值（32 KB）。超过的 `stdout`/`output` 落到 `runtime_data/artifacts/{run_id}/{call_id}.txt`，`ToolResult` 只带 `artifact_id` + 头尾摘要 + `truncated=True`。  
+`/api/artifacts/{id}` 支持 Range header 按需返回。**不做此项，Web 切换 run 时大输出直接塞 SSE 会使浏览器崩溃。**
+
+---
+
+### C 可选（预留扩展点）
+
+| # | 位置 | 说明 |
+|---|---|---|
+| C1 | `Tool` 协议 | 加 `preview(arguments) -> PreviewResult` 可选方法，审批面板调用生成"执行预览"（diff/命令解析） |
+| C2 | `packages/runtime/permission.py` | "Allow always for this session" ACL 持久化到 `runtime_data/permissions/{user_id}.json`，进程重启后不丢 |
+| C3 | `NativeToolCallingLLMClient` | 抽出 `LLMProvider` Protocol，支持后续接 OpenAI Responses API / Anthropic native / Ollama 直连 |
+| C4 | `packages/core_io/bash_tools.py` | `BashSessionManager` 加 `list_sessions()`；每个 session 的 stdin 写入接口供嵌入式终端使用 |
+
+---
+
+### 改动顺序（对应 P1–P8）
+
+| 阶段 | runtime 改造 | 依赖 |
+|---|---|---|
+| **P1** 服务层骨架 | B6（`RunManager` 在 app_service）、B2（checkpoint meta） | 无 |
+| **P2** 事件模型 | **A1、A2、A5** 同时做（事件 + ring buffer + progress 回调一次到位） | P1 |
+| **P3** FastAPI + SSE | B5（audit 异步）、B7（artifact）、A6（cancel API） | P2 |
+| **P4** 最小 Web | **A3**（streaming）、**A4**（render fields）、B3（usage 推送） | P3 |
+| **P5** 审批 + Plan UI | B4（tool 元数据）、C1（dry_run preview）、A6（fork） | P4 |
+| **P6** TUI（Textual） | 复用 P2 事件模型，无新 runtime 改动 | P2 |
+| **P7** 终端嵌入 + Memory | B1（消息块）、C4（bash 会话暴露） | P4 |
+| **P8** 持久化升级 | C2（ACL 持久化）、store SQLite 化 | P3 |
+
+### 向后兼容强约束
+
+**所有 runtime 改造对外公开 API 必须保持向后兼容到 P3 结束**：
+
+- 旧 `EventType`/`event_type` 字段保留 `@property` alias
+- `ToolResult.output` 字段保留（`render_*` 是补充而非替换）
+- `AgentRuntime.chat()` 签名不动，新增 `chat_stream()` / `cancel()` / `fork()`
+
+否则现有 19 个测试（`tests/`）会一次全红，每改一步都要修测试，节奏会崩。
