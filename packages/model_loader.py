@@ -286,6 +286,14 @@ class ModelLoader:
         self.config = ModelConfig(**updated_data)
         self._model = None
 
+    @property
+    def active_model_name(self) -> str:
+        return self.config.model_name
+
+    @property
+    def active_model_url(self) -> str:
+        return self.config.model_url
+
     def get_model_info(self) -> Dict[str, Any]:
         backends = [self.config, *self.fallback_configs]
         return {

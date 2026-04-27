@@ -121,6 +121,7 @@ def build_runtime(max_tool_calls: int | None = None) -> AgentRuntime:
         temperature=TEMPERATURE,
     )
     llm = loader.load()
+    active_model_name = getattr(loader, "active_model_name", MODEL_NAME) or MODEL_NAME
 
     registry = ToolRegistry()
     registry.register(
@@ -421,7 +422,7 @@ def build_runtime(max_tool_calls: int | None = None) -> AgentRuntime:
     # Build a shared SkillTool instance so MessageBuilder can inject skill listings
     skill_tool_instance = CoreSkillTool(workspace_root=WORKSPACE_DIR, skill_roots=SKILL_ROOTS)
     runtime = AgentRuntime(
-        llm_client=NativeToolCallingLLMClient(llm=llm, model_name=MODEL_NAME),
+        llm_client=NativeToolCallingLLMClient(llm=llm, model_name=active_model_name),
         message_builder=MessageBuilder(
             short_memory_turns=SHORT_MEMORY_TURNS,
             skill_tool=skill_tool_instance,
