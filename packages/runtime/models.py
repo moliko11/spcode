@@ -68,29 +68,114 @@ class Phase(str, enum.Enum):
 
 class EventType(str, enum.Enum):
     """
-    事件类型
+    事件类型（旧枚举，保留用于向后兼容；新代码请使用 EventKind）
     """
-    RUN_STARTED = "run_started" # 运行开始
-    RUN_RESUMED = "run_resumed" # 运行恢复
-    STEP_STARTED = "step_started" # 步骤开始
-    MODEL_OUTPUT = "model_output" # 模型输出
-    TOOL_SELECTED = "tool_selected" # 工具选择
-    TOOL_STARTED = "tool_started" # 工具开始
-    TOOL_FINISHED = "tool_finished" # 工具完成
-    TOOL_FAILED = "tool_failed" # 工具失败
-    HUMAN_REQUIRED = "human_required" # 人工干预需要
-    HUMAN_APPROVED = "human_approved" # 人工干预审批
-    HUMAN_REJECTED = "human_rejected" # 人工干预拒绝
-    STEP_FINISHED = "step_finished" # 步骤完成
-    CHECKPOINT_SAVED = "checkpoint_saved" # 检查点保存
-    RUN_COMPLETED = "run_completed" # 运行完成
-    RUN_DEGRADED = "run_degraded" # 运行降级
-    RUN_FAILED = "run_failed" # 运行失败
-    CONTEXT_SNIPPED = "context_snipped" # 上下文截取
-    MICROCOMPACT_APPLIED = "microcompact_applied" # 微压缩应用
-    MEMORY_RECALLED = "memory_recalled" # 内存召回
-    MEMORY_STORED = "memory_stored" # 内存存储
-    AUTOCOMPACT_APPLIED = "autocompact_applied" # 自动压缩应用
+    RUN_STARTED = "run_started"
+    RUN_RESUMED = "run_resumed"
+    STEP_STARTED = "step_started"
+    MODEL_OUTPUT = "model_output"
+    TOOL_SELECTED = "tool_selected"
+    TOOL_STARTED = "tool_started"
+    TOOL_FINISHED = "tool_finished"
+    TOOL_FAILED = "tool_failed"
+    HUMAN_REQUIRED = "human_required"
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_REJECTED = "human_rejected"
+    STEP_FINISHED = "step_finished"
+    CHECKPOINT_SAVED = "checkpoint_saved"
+    RUN_COMPLETED = "run_completed"
+    RUN_DEGRADED = "run_degraded"
+    RUN_FAILED = "run_failed"
+    CONTEXT_SNIPPED = "context_snipped"
+    MICROCOMPACT_APPLIED = "microcompact_applied"
+    MEMORY_RECALLED = "memory_recalled"
+    MEMORY_STORED = "memory_stored"
+    AUTOCOMPACT_APPLIED = "autocompact_applied"
+
+
+class EventKind(str, enum.Enum):
+    """
+    新式事件类型，采用 scope.action 双段命名，供前端按前缀分发 reducer。
+    """
+    # ── model.* ─────── LLM 流式输出
+    model_started         = "model.started"
+    model_token           = "model.token"
+    model_thinking        = "model.thinking"
+    model_tool_call_delta = "model.tool_call_delta"
+    model_completed       = "model.completed"
+    model_usage           = "model.usage"
+
+    # ── tool.* ─────── 工具执行全生命周期
+    tool_pending_approval = "tool.pending_approval"
+    tool_approved         = "tool.approved"
+    tool_rejected         = "tool.rejected"
+    tool_started          = "tool.started"
+    tool_progress         = "tool.progress"
+    tool_completed        = "tool.completed"
+    tool_failed           = "tool.failed"
+    tool_retried          = "tool.retried"
+    tool_cached           = "tool.cached"
+
+    # ── run.* ─────── agent run 生命周期
+    run_started           = "run.started"
+    run_resumed           = "run.resumed"
+    run_waiting_human     = "run.waiting_human"
+    run_token_budget      = "run.token_budget"
+    run_completed         = "run.completed"
+    run_degraded          = "run.degraded"
+    run_failed            = "run.failed"
+    run_cancelled         = "run.cancelled"
+    run_forked            = "run.forked"
+
+    # ── plan.* ─────── 工作流规划
+    plan_created          = "plan.created"
+    plan_approved         = "plan.approved"
+    plan_step_started     = "plan.step_started"
+    plan_step_completed   = "plan.step_completed"
+    plan_step_failed      = "plan.step_failed"
+    plan_replanned        = "plan.replanned"
+    plan_completed        = "plan.completed"
+
+    # ── memory.* ─────── 记忆系统
+    memory_recalled       = "memory.recalled"
+    memory_injected       = "memory.injected"
+    memory_written        = "memory.written"
+    memory_compacted      = "memory.compacted"
+    memory_forgotten      = "memory.forgotten"
+
+    # ── checkpoint.* ─────── 检查点
+    checkpoint_saved      = "checkpoint.saved"
+    checkpoint_restored   = "checkpoint.restored"
+
+    # ── session.* ─────── 会话层面
+    session_compacted       = "session.compacted"
+    session_context_snipped = "session.context_snipped"
+
+
+# 旧 EventType → 新 EventKind 映射表，供 EventBus 自动填充 event_kind 字段
+_EVENTTYPE_TO_KIND: dict[EventType, EventKind] = {
+    EventType.RUN_STARTED:          EventKind.run_started,
+    EventType.RUN_RESUMED:          EventKind.run_resumed,
+    EventType.STEP_STARTED:         EventKind.plan_step_started,
+    EventType.MODEL_OUTPUT:         EventKind.model_completed,
+    EventType.TOOL_SELECTED:        EventKind.tool_started,
+    EventType.TOOL_STARTED:         EventKind.tool_started,
+    EventType.TOOL_FINISHED:        EventKind.tool_completed,
+    EventType.TOOL_FAILED:          EventKind.tool_failed,
+    EventType.HUMAN_REQUIRED:       EventKind.tool_pending_approval,
+    EventType.HUMAN_APPROVED:       EventKind.tool_approved,
+    EventType.HUMAN_REJECTED:       EventKind.tool_rejected,
+    EventType.STEP_FINISHED:        EventKind.plan_step_completed,
+    EventType.CHECKPOINT_SAVED:     EventKind.checkpoint_saved,
+    EventType.RUN_COMPLETED:        EventKind.run_completed,
+    EventType.RUN_DEGRADED:         EventKind.run_degraded,
+    EventType.RUN_FAILED:           EventKind.run_failed,
+    EventType.CONTEXT_SNIPPED:      EventKind.session_context_snipped,
+    EventType.MICROCOMPACT_APPLIED: EventKind.session_compacted,
+    EventType.MEMORY_RECALLED:      EventKind.memory_recalled,
+    EventType.MEMORY_STORED:        EventKind.memory_written,
+    EventType.AUTOCOMPACT_APPLIED:  EventKind.memory_compacted,
+}
 
 
 @dataclass(slots=True)
@@ -118,7 +203,8 @@ class ToolCall:
 @dataclass(slots=True)
 class ToolResult:
     """
-    工具结果
+    工具执行结果。
+    新增渲染字段（A4）：render_kind / render_payload / truncated / artifact_id
     """
     call_id: str
     tool_name: str
@@ -136,17 +222,33 @@ class ToolResult:
     from_cache: bool = False
     approved_by: str | None = None
     sandbox_mode: str | None = None
+    # ── A4: 前端差异化渲染字段 ──────────────────────────────────────────────
+    # render_kind: text | diff | code | grep | web | terminal | todo | plan | json | error
+    render_kind: str = "text"
+    # render_payload 结构随 render_kind 变化，详见 UI_INTERACTION_SPEC.md 第二节
+    render_payload: dict[str, Any] = field(default_factory=dict)
+    # 输出超过 32 KB 落盘后置为 True，前端凭 artifact_id 按需拉取
+    truncated: bool = False
+    artifact_id: str | None = None
 
 
 @dataclass(slots=True)
 class AgentEvent:
     """
-    agent事件
+    agent事件信封。
+    - event_type: 旧式枚举（向后兼容，由 EventBus 继续使用）
+    - seq: 单调递增序号，由 EventBus.publish() 注入；用于 SSE Last-Event-ID 断线续传
+    - event_kind: scope.action 格式的新式事件类型字符串；为空时由 EventBus 按映射表填充
+    - scope / scope_id: 事件所属资源范围（run/plan_run/step_run/session）
     """
     run_id: str
     event_type: EventType
     ts: float
     step: int
+    seq: int = 0
+    event_kind: str = ""
+    scope: str = "run"
+    scope_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
 
 

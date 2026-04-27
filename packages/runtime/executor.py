@@ -7,7 +7,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .budget import IdempotencyStore, RetryPolicy, diff_workspace, snapshot_workspace
 from .config import WORKSPACE_DIR
@@ -35,7 +35,13 @@ class ShellExecutor:
     def __init__(self, workspace_dir: Path = WORKSPACE_DIR) -> None:
         self.workspace_dir = workspace_dir
 
-    async def run(self, spec: ShellToolSpec, arguments: dict[str, Any]) -> ToolResult:
+    async def run(
+        self,
+        spec: ShellToolSpec,
+        arguments: dict[str, Any],
+        *,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> ToolResult:
         command = arguments["command"]
         workdir = self._resolve_workdir(spec, arguments.get("workdir", "."))
         self._check_command_allowed(spec, command)
@@ -48,15 +54,44 @@ class ShellExecutor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            stdout_raw, stderr_raw = await asyncio.wait_for(process.communicate(), timeout=spec.timeout_s)
-        except asyncio.TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise TimeoutError(f"shell command timed out after {spec.timeout_s}s") from exc
 
-        stdout = truncate_text(stdout_raw.decode("utf-8", errors="replace"), spec.capture_output_limit)
-        stderr = truncate_text(stderr_raw.decode("utf-8", errors="replace"), spec.capture_output_limit)
+        if on_progress is not None and process.stdout is not None:
+            # 流式路径：逐行读取 stdout，通过 on_progress 实时推送进度事件
+            stdout_chunks: list[str] = []
+
+            async def _drain_stdout() -> None:
+                assert process.stdout is not None
+                async for raw_line in process.stdout:
+                    line = raw_line.decode("utf-8", errors="replace")
+                    stdout_chunks.append(line)
+                    await on_progress({"line": line.rstrip("\n\r"), "stream": "stdout"})
+
+            try:
+                stderr_task = asyncio.create_task(process.stderr.read() if process.stderr else asyncio.sleep(0))
+                await asyncio.wait_for(_drain_stdout(), timeout=spec.timeout_s)
+                stderr_raw = await stderr_task
+                await process.wait()
+            except asyncio.TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise TimeoutError(f"shell command timed out after {spec.timeout_s}s") from exc
+
+            stdout_raw_str = "".join(stdout_chunks)
+            stderr_bytes = stderr_raw if isinstance(stderr_raw, bytes) else b""
+        else:
+            # 原始路径（无回调）
+            try:
+                stdout_raw_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(), timeout=spec.timeout_s
+                )
+            except asyncio.TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise TimeoutError(f"shell command timed out after {spec.timeout_s}s") from exc
+            stdout_raw_str = stdout_raw_bytes.decode("utf-8", errors="replace")
+
+        stdout = truncate_text(stdout_raw_str, spec.capture_output_limit)
+        stderr = truncate_text(stderr_bytes.decode("utf-8", errors="replace"), spec.capture_output_limit)
         after = snapshot_workspace(WORKSPACE_DIR)
         changed_files = diff_workspace(before, after)
         ok = process.returncode == 0
@@ -114,14 +149,19 @@ class ShellExecutor:
 
 class ShellTool:
     """
-    Shell工具
+    Shell工具（A5：arun 透传 on_progress 回调给 ShellExecutor）
     """
     def __init__(self, executor: ShellExecutor, spec_getter: Callable[[], ShellToolSpec]) -> None:
         self.executor = executor
         self.spec_getter = spec_getter
 
-    async def arun(self, arguments: dict[str, Any]) -> ToolResult:
-        return await self.executor.run(self.spec_getter(), arguments)
+    async def arun(
+        self,
+        arguments: dict[str, Any],
+        *,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> ToolResult:
+        return await self.executor.run(self.spec_getter(), arguments, on_progress=on_progress)
 
 
 class ToolExecutor:
@@ -208,7 +248,29 @@ class ToolExecutor:
         )
 
         async def _invoke_once() -> ToolResult:
-            raw = await asyncio.wait_for(tool.arun(call.arguments), timeout=spec.timeout_s)
+            # A5: 若工具支持 on_progress 回调（ShellTool），注入进度事件发布
+            if isinstance(tool, ShellTool):
+                async def _on_progress(data: dict[str, Any]) -> None:
+                    await self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.TOOL_STARTED,  # 复用已有事件类型
+                            event_kind="tool.progress",         # 新式 kind 直接覆盖
+                            ts=time.time(),
+                            step=state.step,
+                            payload={
+                                "tool_name": call.tool_name,
+                                "call_id": call.call_id,
+                                **data,
+                            },
+                        )
+                    )
+                raw = await asyncio.wait_for(
+                    tool.arun(call.arguments, on_progress=_on_progress),
+                    timeout=spec.timeout_s,
+                )
+            else:
+                raw = await asyncio.wait_for(tool.arun(call.arguments), timeout=spec.timeout_s)
             result = self._normalize_result(call, raw)
             result.approved_by = call.metadata.get("approved_by")
             result.sandbox_mode = result.sandbox_mode or sandbox_mode
@@ -275,6 +337,10 @@ class ToolExecutor:
                 from_cache=raw.from_cache,
                 approved_by=raw.approved_by,
                 sandbox_mode=raw.sandbox_mode,
+                render_kind=raw.render_kind,
+                render_payload=dict(raw.render_payload),
+                truncated=raw.truncated,
+                artifact_id=raw.artifact_id,
             )
         if isinstance(raw, dict):
             ok = bool(raw.get("ok", True))
