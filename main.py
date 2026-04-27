@@ -9,6 +9,7 @@ from typing import Any
 
 from packages.runtime.bootstrap import build_runtime, build_llm
 from packages.runtime.config import PLANS_DIR, PLAN_RUNS_DIR
+from packages.runtime.cost import CostTracker
 from packages.planner.planner import Planner
 from packages.planner.store import PlanStore
 from packages.orchestrator.orchestrator import Orchestrator
@@ -17,6 +18,43 @@ from packages.orchestrator.store import PlanRunStore
 
 def _find_waiting_step(plan_run: Any) -> Any | None:
     return next((step for step in plan_run.step_runs if step.status.value == "waiting_human"), None)
+
+
+def _format_cost(state_or_metadata: Any) -> str:
+    metadata = state_or_metadata if isinstance(state_or_metadata, dict) else getattr(state_or_metadata, "metadata", {})
+    if not isinstance(metadata, dict):
+        return ""
+    cost_summary = metadata.get("cost_summary")
+    if not cost_summary or not isinstance(cost_summary, dict):
+        return ""
+    total_tokens = cost_summary.get("total_tokens", 0)
+    if total_tokens == 0:
+        return ""
+    input_t = cost_summary.get("input_tokens", 0)
+    output_t = cost_summary.get("output_tokens", 0)
+    cost_cny = cost_summary.get("cost_cny", 0.0)
+    cost_usd = cost_summary.get("cost_usd", 0.0)
+    calls = cost_summary.get("model_calls", 0)
+    return f"💰 token: input={input_t}, output={output_t}, total={total_tokens} | 花费: ¥{cost_cny:.6f} / ${cost_usd:.6f} ({calls}次调用)"
+
+
+def _format_plan_run_cost(plan_run: Any) -> str:
+    from packages.runtime.cost import CostTracker, TokenUsage, MODEL_PRICING
+    tracker = CostTracker()
+    for sr in plan_run.step_runs:
+        sr_meta = getattr(sr, "metadata", {}) or {}
+        if not isinstance(sr_meta, dict):
+            continue
+        rt_cost = sr_meta.get("runtime_cost_summary")
+        if isinstance(rt_cost, dict) and rt_cost.get("total_tokens", 0) > 0:
+            model_name = rt_cost.get("model_name", "unknown")
+            usage = TokenUsage(
+                input_tokens=rt_cost.get("input_tokens", 0),
+                output_tokens=rt_cost.get("output_tokens", 0),
+                total_tokens=rt_cost.get("total_tokens", 0),
+            )
+            tracker.add(model_name, usage)
+    return tracker.format_summary()
 
 
 def _prompt_approval_action(pending_request: dict[str, Any]) -> tuple[bool, dict[str, Any] | None, str]:
@@ -62,6 +100,9 @@ async def run_chat(args: argparse.Namespace) -> None:
         state = await runtime.chat(user_id=args.user_id, session_id=args.session_id, message=args.message)
         print(state.final_output or state.failure_reason or "")
         print(f"run_id={state.run_id} status={state.status.value}")
+        cost_line = _format_cost(state)
+        if cost_line:
+            print(cost_line)
         return
 
     print(f"session_id={args.session_id} user_id={args.user_id}")
@@ -76,6 +117,9 @@ async def run_chat(args: argparse.Namespace) -> None:
         state = await runtime.chat(user_id=args.user_id, session_id=args.session_id, message=message)
         print(f"assistant> {state.final_output or state.failure_reason or ''}")
         print(f"run_id={state.run_id} status={state.status.value}")
+        cost_line = _format_cost(state)
+        if cost_line:
+            print(cost_line)
 
         # 人工审批循环：bash/高风险工具需要确认后继续执行
         while state.status.value == "waiting_human":
@@ -91,6 +135,11 @@ async def run_chat(args: argparse.Namespace) -> None:
             )
             print(f"assistant> {state.final_output or state.failure_reason or ''}")
             print(f"run_id={state.run_id} status={state.status.value}")
+            cost_line = _format_cost(state)
+            if cost_line:
+                print(cost_line)
+
+    # end while
 
 
 async def run_orchestrate(args: argparse.Namespace) -> None:
@@ -110,6 +159,9 @@ async def run_orchestrate(args: argparse.Namespace) -> None:
     plan_run = await orchestrator.run(goal=args.goal, context=args.context or "")
     print(json.dumps(plan_run.to_dict(), ensure_ascii=False, indent=2))
     print(f"\nplan_run_id={plan_run.plan_run_id}  status={plan_run.status}  steps={len(plan_run.step_runs)}")
+    plan_cost = _format_plan_run_cost(plan_run)
+    if plan_cost:
+        print(plan_cost)
 
     while True:
         pending = _find_waiting_step(plan_run)
@@ -244,6 +296,13 @@ async def run_plan(args: argparse.Namespace) -> None:
     store.save(plan)
     print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
     print(f"\nplan_id={plan.plan_id}  steps={len(plan.steps)}  saved to {PLANS_DIR / plan.plan_id}.json")
+    if planner.last_token_usage and planner.last_token_usage.total_tokens > 0:
+        from packages.runtime.cost import CostTracker
+        tracker = CostTracker()
+        tracker.add("planner", planner.last_token_usage)
+        cost_line = tracker.format_summary()
+        if cost_line:
+            print(cost_line)
 
 
 async def run_show_memory(args: argparse.Namespace) -> None:

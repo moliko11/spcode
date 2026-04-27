@@ -101,6 +101,11 @@ class StepExecutor:
         if isinstance(metadata, dict):
             step_run.metadata["runtime_timing_summary"] = metadata.get("timing_summary", {})
             step_run.metadata["runtime_timings"] = metadata.get("timings", [])
+            cost_summary = metadata.get("cost_summary")
+            if isinstance(cost_summary, dict):
+                cost_with_model = dict(cost_summary)
+                cost_with_model["model_name"] = getattr(state, "metadata", {}).get("model_name", "unknown")
+                step_run.metadata["runtime_cost_summary"] = cost_with_model
             if metadata.get("errors"):
                 step_run.metadata["runtime_errors"] = metadata.get("errors")
         status = getattr(state, "status")

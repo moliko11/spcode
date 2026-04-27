@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from .budget import BudgetController, IdempotencyStore
 from .config import DEFAULT_LOADED_TOOL_NAMES
+from .cost import CostTracker, TokenUsage
 from .events import EventBus
 from .executor import ToolExecutor
 from .guardrail import GuardrailEngine
@@ -261,7 +262,7 @@ class AgentRuntime:
                 model_start = now()
                 response = await self.llm_client.invoke(runtime_messages, tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)))
                 model_ms = elapsed_ms(model_start)
-                content, tool_calls = self.llm_client.extract_content_and_tool_calls(response)
+                content, tool_calls, token_usage = self.llm_client.extract_content_and_tool_calls(response)
                 record_timing(
                     state.metadata,
                     "model_invoke_ms",
@@ -270,6 +271,8 @@ class AgentRuntime:
                     tool_calls=len(tool_calls),
                     model_name=self.llm_client.model_name,
                 )
+                cost_tracker = self._get_cost_tracker(state)
+                cost_tracker.add(self.llm_client.model_name, token_usage)
                 await self.event_bus.publish(
                     AgentEvent(
                         run_id=state.run_id,
@@ -600,6 +603,31 @@ class AgentRuntime:
         summary["total_ms"] = total_ms
         summary["runtime_wall_ms"] = total_ms
         summary["tool_total_ms"] = sum(result.latency_ms for result in state.tool_results)
+        cost_tracker = self._get_cost_tracker(state)
+        cost_total = cost_tracker.total()
+        if cost_total["total_tokens"] > 0:
+            state.metadata["cost_summary"] = cost_total
+
+    def _get_cost_tracker(self, state: AgentState) -> CostTracker:
+        if "cost_tracker" not in state.metadata:
+            state.metadata["cost_tracker"] = CostTracker()
+        tracker = state.metadata["cost_tracker"]
+        if isinstance(tracker, CostTracker):
+            return tracker
+        if isinstance(tracker, dict):
+            restored = CostTracker()
+            for rec_data in tracker.get("records", []):
+                usage_data = rec_data.get("usage", {})
+                usage = TokenUsage(
+                    input_tokens=usage_data.get("input_tokens", 0),
+                    output_tokens=usage_data.get("output_tokens", 0),
+                    total_tokens=usage_data.get("total_tokens", 0),
+                )
+                restored.add(rec_data.get("model_name", "unknown"), usage)
+            state.metadata["cost_tracker"] = restored
+            return restored
+        state.metadata["cost_tracker"] = CostTracker()
+        return state.metadata["cost_tracker"]
 
     async def _mark_failed(self, state: AgentState, exc: Exception, run_start: float) -> None:
         state.status = RunStatus.FAILED

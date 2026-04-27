@@ -11,6 +11,7 @@ from packages.planner.planner import Planner
 from packages.planner.scheduler import Scheduler
 from packages.planner.store import PlanStore
 from packages.runtime.agent_loop import AgentRuntime
+from packages.runtime.cost import CostTracker, TokenUsage
 from packages.runtime.timing import elapsed_ms, now, record_timing
 
 from .executor import StepExecutor
@@ -70,6 +71,11 @@ class Orchestrator:
             record_timing(plan_run.metadata, "planning_ms", elapsed_ms(plan_start))
             return self._finalize_plan_run(plan_run)
         record_timing(plan_run.metadata, "planning_ms", elapsed_ms(plan_start), steps=len(plan.steps))
+        planner_usage = getattr(self._planner, "last_token_usage", None)
+        if planner_usage is not None and planner_usage.total_tokens > 0:
+            planner_cost = CostTracker()
+            planner_cost.add("planner", planner_usage)
+            plan_run.metadata["planner_cost"] = planner_cost.total()
         plan.status = PlanStatus.RUNNING
         self._plan_store.save(plan)
         logger.info(

@@ -7,6 +7,7 @@ import time
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from packages.runtime.cost import TokenUsage, extract_usage_from_response
 from .models import PlanStatus, TaskPlan, TaskStep
 from .prompts import PLAN_SYSTEM_PROMPT, build_plan_user_prompt
 
@@ -14,28 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 class PlannerError(Exception):
-    """Planner 无法生成有效计划时抛出"""  
+    pass
 
 
 class Planner:
-    """
-    任务规划器：接收目标（goal）和可选背景（context），
-    调用 LLM 生成结构化 TaskPlan。
-
-    W1 阶段只负责生成计划，不执行任何工具。
-    """
-
     def __init__(self, llm: BaseChatModel) -> None:
         self._llm = llm
+        self.last_token_usage: TokenUsage | None = None
 
     async def create_plan(self, goal: str, context: str = "") -> TaskPlan:
-        """
-        调用 LLM 将 goal 拆分为带依赖关系和验收标准的 TaskPlan。
-
-        :param goal: 用户的目标描述。
-        :param context: 可选背景（记忆摘要、项目说明等）。
-        :raises PlannerError: LLM 返回无法解析的内容时。
-        """
         messages = [
             SystemMessage(content=PLAN_SYSTEM_PROMPT),
             HumanMessage(content=build_plan_user_prompt(goal, context)),
@@ -43,6 +31,7 @@ class Planner:
 
         logger.debug("Planner.create_plan goal=%r", goal)
         response = await self._llm.ainvoke(messages)
+        self.last_token_usage = extract_usage_from_response(response)
         raw: str = response.content if hasattr(response, "content") else str(response)
 
         plan = self._parse_response(goal, context, raw)

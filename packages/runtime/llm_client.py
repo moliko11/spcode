@@ -5,6 +5,7 @@ import json
 import uuid
 from typing import Any
 
+from .cost import TokenUsage, extract_usage_from_response
 from .models import safe_json_dumps
 
 
@@ -29,14 +30,15 @@ class NativeToolCallingLLMClient:
             return await bound_llm.ainvoke(messages)
         return await asyncio.to_thread(bound_llm.invoke, messages)
 
-    def extract_content_and_tool_calls(self, response: Any) -> tuple[str, list[dict[str, Any]]]:
+    def extract_content_and_tool_calls(self, response: Any) -> tuple[str, list[dict[str, Any]], TokenUsage]:
         content = self._coerce_content(getattr(response, "content", ""))
+        usage = extract_usage_from_response(response)
         tool_calls = getattr(response, "tool_calls", None)
         if tool_calls:
             return content, [
                 {"id": item.get("id") or str(uuid.uuid4()), "name": item.get("name"), "arguments": item.get("args", {}) or {}}
                 for item in tool_calls
-            ]
+            ], usage
         additional_kwargs = getattr(response, "additional_kwargs", {}) or {}
         raw_tool_calls = additional_kwargs.get("tool_calls", []) or []
         normalized = []
@@ -49,7 +51,7 @@ class NativeToolCallingLLMClient:
                 except json.JSONDecodeError:
                     args = {}
             normalized.append({"id": item.get("id") or str(uuid.uuid4()), "name": fn.get("name"), "arguments": args if isinstance(args, dict) else {}})
-        return content, normalized
+        return content, normalized, usage
 
     @staticmethod
     def _coerce_content(content: Any) -> str:
