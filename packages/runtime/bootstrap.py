@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import time
 from typing import Any
 
@@ -112,8 +113,13 @@ class ListDirTool:
         return "\n".join(entries)
 
 
-def build_runtime(max_tool_calls: int | None = None) -> AgentRuntime:
+def build_runtime(
+    max_tool_calls: int | None = None,
+    enable_event_logging: bool | None = None,
+) -> AgentRuntime:
     ensure_dirs()
+    if enable_event_logging is None:
+        enable_event_logging = os.getenv("AGENT_EVENT_STDOUT", "0").lower() in {"1", "true", "yes", "on"}
     loader = create_model_loader(
         model_url=MODEL_URL,
         model_name=MODEL_NAME,
@@ -406,7 +412,8 @@ def build_runtime(max_tool_calls: int | None = None) -> AgentRuntime:
     )
 
     event_bus = EventBus()
-    event_bus.subscribe(LoggingSubscriber())
+    if enable_event_logging:
+        event_bus.subscribe(LoggingSubscriber())
     event_bus.subscribe(AuditSubscriber())
     guardrail_engine = GuardrailEngine()
     idempotency_store = IdempotencyStore()
