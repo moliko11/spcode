@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .cost import TokenUsage, extract_usage_from_response
 from .models import safe_json_dumps
@@ -29,6 +29,55 @@ class NativeToolCallingLLMClient:
         if hasattr(bound_llm, "ainvoke"):
             return await bound_llm.ainvoke(messages)
         return await asyncio.to_thread(bound_llm.invoke, messages)
+
+    async def invoke_with_stream(
+        self,
+        messages: list[Any],
+        tool_schemas: list[dict[str, Any]],
+        on_token: Callable[[str], Awaitable[None] | None] | None = None,
+        on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+        on_thinking: Callable[[str], Awaitable[None] | None] | None = None,
+    ) -> Any:
+        """
+        优先使用 astream 获取增量 token；若底层模型不支持则退化到普通 invoke。
+        返回值与 invoke() 一致（完整响应对象）。
+        """
+        cache_key = safe_json_dumps(tool_schemas)
+        bound_llm = self._bound_cache.get(cache_key)
+        if bound_llm is None:
+            bound_llm = self._bind_tools(self.raw_llm, tool_schemas)
+            self._bound_cache[cache_key] = bound_llm
+
+        if hasattr(bound_llm, "astream"):
+            merged: Any | None = None
+            try:
+                async for chunk in bound_llm.astream(messages):
+                    text = self._coerce_content(getattr(chunk, "content", ""))
+                    if text and on_token is not None:
+                        maybe = on_token(text)
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                    if on_tool_call_delta is not None:
+                        for item in getattr(chunk, "tool_call_chunks", None) or []:
+                            if not isinstance(item, dict):
+                                continue
+                            maybe = on_tool_call_delta(item)
+                            if asyncio.iscoroutine(maybe):
+                                await maybe
+                    extra = getattr(chunk, "additional_kwargs", {}) or {}
+                    reasoning = extra.get("reasoning_content") or extra.get("reasoning")
+                    if reasoning and on_thinking is not None:
+                        maybe = on_thinking(str(reasoning))
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                    merged = chunk if merged is None else (merged + chunk)
+                if merged is not None:
+                    return merged
+            except Exception:
+                # streaming 路径失败时退化到普通调用，避免中断主流程
+                pass
+
+        return await self.invoke(messages, tool_schemas)
 
     def extract_content_and_tool_calls(self, response: Any) -> tuple[str, list[dict[str, Any]], TokenUsage]:
         content = self._coerce_content(getattr(response, "content", ""))

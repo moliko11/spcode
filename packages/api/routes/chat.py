@@ -8,9 +8,11 @@ DELETE /api/chat/runs/{id}        取消
 """
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
+from sse_starlette.sse import EventSourceResponse
 
 from packages.app_service.chat_service import ChatService, HumanDecision
 from packages.api.deps import ChatServiceDep, RunManagerDep
@@ -62,6 +64,38 @@ async def start_chat_run(
     return _to_response(result)
 
 
+@router.post(
+    "/stream",
+    summary="发起一次流式 chat run（SSE）",
+    response_class=EventSourceResponse,
+)
+async def stream_chat_run(
+    body: ChatRequest,
+    rm: RunManagerDep,
+    svc: ChatServiceDep,
+    after_seq: int = Query(0, ge=0, description="从此 seq 之后开始（断线续传）"),
+) -> EventSourceResponse:
+    run_id = await rm.start_chat(
+        chat_service=svc,
+        user_id=body.user_id,
+        session_id=body.session_id,
+        message=body.message,
+    )
+
+    async def _generator() -> AsyncIterator[dict[str, Any]]:
+        async for event in rm.subscribe(run_id, after_seq=after_seq):
+            kind = event.get("event_kind") or event.get("kind", "unknown")
+            seq = event.get("seq", 0)
+            payload = {"run_id": run_id, **event}
+            yield {
+                "id": str(seq),
+                "event": kind,
+                "data": json.dumps(payload, ensure_ascii=False),
+            }
+
+    return EventSourceResponse(_generator(), ping=15)
+
+
 @router.get(
     "/runs/{run_id}",
     response_model=ChatRunResponse,
@@ -109,7 +143,7 @@ async def cancel_chat_run(
     run_id: str,
     rm: RunManagerDep,
 ) -> CancelRunResponse:
-    cancelled = await rm.cancel(run_id)
+    cancelled = rm.cancel(run_id)
     return CancelRunResponse(run_id=run_id, cancelled=cancelled)
 
 

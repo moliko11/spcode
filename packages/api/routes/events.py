@@ -88,5 +88,5 @@ async def get_run(run_id: str, rm: RunManagerDep) -> dict[str, Any]:
     summary="取消 run",
 )
 async def cancel_run(run_id: str, rm: RunManagerDep) -> CancelRunResponse:
-    cancelled = await rm.cancel(run_id)
+    cancelled = rm.cancel(run_id)
     return CancelRunResponse(run_id=run_id, cancelled=cancelled)

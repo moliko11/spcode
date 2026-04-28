@@ -71,6 +71,9 @@ class CostTracker:
             "model_name": ",".join(sorted(model_names)) if model_names else "unknown",
         }
 
+    def snapshot(self) -> dict[str, Any]:
+        return self.total()
+
     def format_summary(self) -> str:
         t = self.total()
         if t["total_tokens"] == 0:

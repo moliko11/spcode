@@ -40,6 +40,10 @@ class EventBus:
         if subscriber not in self._subscribers:
             self._subscribers.append(subscriber)
 
+    def unsubscribe(self, subscriber: EventSubscriber) -> None:
+        if subscriber in self._subscribers:
+            self._subscribers.remove(subscriber)
+
     async def publish(self, event: AgentEvent) -> None:
         # 注入 seq
         event.seq = next(self._seq_counter)

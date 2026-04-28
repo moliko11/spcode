@@ -357,8 +357,51 @@ class AgentRuntime:
                 # rebuild runtime_messages after compaction
                 runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
                 await self.event_bus.publish(AgentEvent(run_id=state.run_id, event_type=EventType.STEP_STARTED, ts=time.time(), step=state.step))
+                await self.event_bus.publish(
+                    AgentEvent(
+                        run_id=state.run_id,
+                        event_type=EventType.MODEL_OUTPUT,
+                        event_kind=EventKind.model_started.value,
+                        ts=time.time(),
+                        step=state.step,
+                        payload={"model_name": self.llm_client.model_name},
+                    )
+                )
                 model_start = now()
-                response = await self.llm_client.invoke(runtime_messages, tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)))
+                response = await self.llm_client.invoke_with_stream(
+                    runtime_messages,
+                    tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)),
+                    on_token=lambda token: self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.MODEL_OUTPUT,
+                            event_kind=EventKind.model_token.value,
+                            ts=time.time(),
+                            step=state.step,
+                            payload={"token": token},
+                        )
+                    ),
+                    on_tool_call_delta=lambda delta: self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.MODEL_OUTPUT,
+                            event_kind=EventKind.model_tool_call_delta.value,
+                            ts=time.time(),
+                            step=state.step,
+                            payload={"delta": delta},
+                        )
+                    ),
+                    on_thinking=lambda text: self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.MODEL_OUTPUT,
+                            event_kind=EventKind.model_thinking.value,
+                            ts=time.time(),
+                            step=state.step,
+                            payload={"text": text},
+                        )
+                    ),
+                )
                 model_ms = elapsed_ms(model_start)
                 content, tool_calls, token_usage = self.llm_client.extract_content_and_tool_calls(response)
                 record_timing(
@@ -371,10 +414,33 @@ class AgentRuntime:
                 )
                 cost_tracker = self._get_cost_tracker(state)
                 cost_tracker.add(self.llm_client.model_name, token_usage)
+                usage_snapshot = cost_tracker.snapshot()
+                if token_usage.total_tokens > 0:
+                    await self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.MODEL_OUTPUT,
+                            event_kind=EventKind.model_usage.value,
+                            ts=time.time(),
+                            step=state.step,
+                            payload=usage_snapshot,
+                        )
+                    )
+                    await self.event_bus.publish(
+                        AgentEvent(
+                            run_id=state.run_id,
+                            event_type=EventType.RUN_STARTED,
+                            event_kind=EventKind.run_token_budget.value,
+                            ts=time.time(),
+                            step=state.step,
+                            payload=usage_snapshot,
+                        )
+                    )
                 await self.event_bus.publish(
                     AgentEvent(
                         run_id=state.run_id,
                         event_type=EventType.MODEL_OUTPUT,
+                        event_kind=EventKind.model_completed.value,
                         ts=time.time(),
                         step=state.step,
                         payload={"content": content, "tool_calls": tool_calls},

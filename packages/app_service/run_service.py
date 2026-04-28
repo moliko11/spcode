@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncIterator
 
-from packages.runtime.models import AgentState, RunStatus
+from packages.runtime.models import AgentEvent, AgentState, EventType, RunStatus, to_jsonable
 
 
 class TaskKind(str, Enum):
@@ -56,6 +56,41 @@ class RunRecord:
             "failure_reason": self.failure_reason,
             "cost_summary": self.cost_summary,
         }
+
+
+class _RuntimeEventForwarder:
+    """把 AgentRuntime 内部事件转发到 RunManager 的外部 run 流。"""
+
+    def __init__(self, manager: "RunManager", record: RunRecord) -> None:
+        self.manager = manager
+        self.record = record
+        self.runtime_run_id: str | None = None
+
+    async def handle(self, event: AgentEvent) -> None:
+        if self.runtime_run_id is None:
+            if event.event_type != EventType.RUN_STARTED:
+                return
+            if event.payload.get("session_id") != self.record.session_id:
+                return
+            if event.payload.get("task") != self.record.goal:
+                return
+            self.runtime_run_id = event.run_id
+        elif event.run_id != self.runtime_run_id:
+            return
+
+        self.manager._push_event(
+            self.record.run_id,
+            {
+                "kind": event.event_kind or event.event_type.value,
+                "event_kind": event.event_kind or event.event_type.value,
+                "event_type": event.event_type.value,
+                "run_id": self.record.run_id,
+                "runtime_run_id": event.run_id,
+                "step": event.step,
+                "ts": event.ts,
+                "payload": to_jsonable(event.payload),
+            },
+        )
 
 
 class RunManager:
@@ -254,6 +289,23 @@ class RunManager:
         for q in list(self._queues.get(run_id, [])):
             q.put_nowait({"_sentinel": True})
 
+    def _attach_runtime_forwarder(self, chat_service: Any, record: RunRecord) -> _RuntimeEventForwarder | None:
+        runtime = getattr(chat_service, "_runtime", None)
+        event_bus = getattr(runtime, "event_bus", None)
+        if event_bus is None or not hasattr(event_bus, "subscribe"):
+            return None
+        forwarder = _RuntimeEventForwarder(self, record)
+        event_bus.subscribe(forwarder)
+        return forwarder
+
+    def _detach_runtime_forwarder(self, chat_service: Any, forwarder: _RuntimeEventForwarder | None) -> None:
+        if forwarder is None:
+            return
+        runtime = getattr(chat_service, "_runtime", None)
+        event_bus = getattr(runtime, "event_bus", None)
+        if event_bus is not None and hasattr(event_bus, "unsubscribe"):
+            event_bus.unsubscribe(forwarder)
+
     async def _run_chat(
         self,
         chat_service: Any,
@@ -261,6 +313,7 @@ class RunManager:
         cancel_ev: asyncio.Event,
     ) -> None:
         """实际执行 chat，捕获结果并更新 record。"""
+        forwarder = self._attach_runtime_forwarder(chat_service, record)
         self._push_event(record.run_id, {
             "kind": "run.started",
             "run_id": record.run_id,
@@ -300,6 +353,7 @@ class RunManager:
                 "ts": time.time(),
             })
         finally:
+            self._detach_runtime_forwarder(chat_service, forwarder)
             self._close_queues(record.run_id)
             self._cancel_events.pop(record.run_id, None)
 
