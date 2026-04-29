@@ -56,3 +56,8 @@ class PlanStore:
                 pass
         plans.sort(key=lambda pl: pl.created_at)
         return plans
+
+    def list_recent(self, limit: int = 20) -> list[TaskPlan]:
+        plans = self.list_all()
+        plans.sort(key=lambda pl: pl.updated_at or pl.created_at, reverse=True)
+        return plans[:limit]

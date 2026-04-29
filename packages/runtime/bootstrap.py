@@ -18,6 +18,11 @@ from packages.tools import (
     GrepTool as CoreGrepTool,
     MCPTool as CoreMCPTool,
     SkillTool as CoreSkillTool,
+    TaskCreateTool as CoreTaskCreateTool,
+    TaskListTool as CoreTaskListTool,
+    TaskOutputTool as CoreTaskOutputTool,
+    TaskStopTool as CoreTaskStopTool,
+    TaskUpdateTool as CoreTaskUpdateTool,
     ToolSearchTool as CoreToolSearchTool,
     WebFetchTool as CoreWebFetchTool,
     WebSearchTool as CoreWebSearchTool,
@@ -39,6 +44,8 @@ from .config import (
     MEMORY_USERS_DIR,
     MODEL_NAME,
     MODEL_URL,
+    PLAN_RUNS_DIR,
+    PLANS_DIR,
     SESSION_DIR,
     SHORT_MEMORY_TURNS,
     TEMPERATURE,
@@ -102,6 +109,7 @@ class ListDirTool:
     """
     async def arun(self, arguments: dict[str, Any]) -> str:
         root = workspace_resolve(arguments.get("path", "."))
+        workspace_root = WORKSPACE_DIR.resolve()
         if not root.exists():
             raise FileNotFoundError(f"directory not found: {root.name}")
         if not root.is_dir():
@@ -109,7 +117,7 @@ class ListDirTool:
         entries = []
         for child in sorted(root.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
             kind = "dir" if child.is_dir() else "file"
-            entries.append(f"{kind}\t{child.relative_to(WORKSPACE_DIR)}")
+            entries.append(f"{kind}\t{child.resolve().relative_to(workspace_root)}")
         return "\n".join(entries)
 
 
@@ -168,6 +176,122 @@ def build_runtime(
             },
         ),
         CoreToolSearchTool(catalog=TOOL_CATALOG),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_create",
+            description="Create a workflow task inside a persisted plan, or create a new ad-hoc plan with one task.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "goal": {"type": "string"},
+                    "context": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "dependencies": {"type": "array", "items": {"type": "string"}},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                    "suggested_tools": {"type": "array", "items": {"type": "string"}},
+                    "target_files": {"type": "array", "items": {"type": "string"}},
+                    "artifacts": {"type": "array", "items": {"type": "object"}},
+                    "evidence": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["title"],
+            },
+            side_effect="local_fs",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTaskCreateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_update",
+            description="Update a persisted workflow task status, result summary, evidence, artifacts, dependencies, or metadata.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "string"},
+                    "plan_run_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "status": {"type": "string", "enum": ["pending", "ready", "running", "waiting_human", "completed", "failed", "skipped", "blocked", "cancelled"]},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "result_summary": {"type": "string"},
+                    "error": {"type": "string"},
+                    "dependencies": {"type": "array", "items": {"type": "string"}},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                    "target_files": {"type": "array", "items": {"type": "string"}},
+                    "artifacts": {"type": "array", "items": {"type": "object"}},
+                    "evidence": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["task_id"],
+            },
+            side_effect="local_fs",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTaskUpdateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_list",
+            description="List persisted workflow tasks from a plan, a plan run, or recent plans.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "string"},
+                    "plan_run_id": {"type": "string"},
+                    "status_filter": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": [],
+            },
+            side_effect="local_fs",
+            sandbox_required=True,
+        ),
+        CoreTaskListTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_output",
+            description="Read task, plan, or plan run output including summaries, artifacts, and evidence.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "plan_run_id": {"type": "string"},
+                },
+                "required": [],
+            },
+            side_effect="local_fs",
+            sandbox_required=True,
+        ),
+        CoreTaskOutputTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_stop",
+            description="Stop a workflow task, all unfinished tasks in a plan, or a running plan run.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "plan_run_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": [],
+            },
+            readonly=False,
+            risk_level="medium",
+            side_effect="local_fs",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTaskStopTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
     )
     registry.register(
         ToolSpec(

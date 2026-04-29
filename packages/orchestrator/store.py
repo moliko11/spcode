@@ -36,3 +36,19 @@ class PlanRunStore:
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
         return PlanRun.from_dict(data)
+
+    def list_all(self) -> list[PlanRun]:
+        plan_runs: list[PlanRun] = []
+        for path in sorted(self.root.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                plan_runs.append(PlanRun.from_dict(data))
+            except Exception:
+                pass
+        plan_runs.sort(key=lambda item: item.started_at)
+        return plan_runs
+
+    def list_recent(self, limit: int = 20) -> list[PlanRun]:
+        plan_runs = self.list_all()
+        plan_runs.sort(key=lambda item: item.finished_at or item.started_at, reverse=True)
+        return plan_runs[:limit]

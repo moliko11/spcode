@@ -6,6 +6,11 @@ from .GlobTool import GlobTool
 from .GrepTool import GrepTool
 from .MCPTool import MCPTool
 from .SkillTool import SkillTool
+from .TaskCreateTool import TaskCreateTool
+from .TaskListTool import TaskListTool
+from .TaskOutputTool import TaskOutputTool
+from .TaskStopTool import TaskStopTool
+from .TaskUpdateTool import TaskUpdateTool
 from .ToolSearchTool import ToolSearchTool
 from .WebFetchTool import WebFetchTool
 from .WebSearchTool import WebSearchTool
@@ -19,6 +24,11 @@ __all__ = [
     "GlobTool",
     "GrepTool",
     "SkillTool",
+    "TaskCreateTool",
+    "TaskUpdateTool",
+    "TaskListTool",
+    "TaskOutputTool",
+    "TaskStopTool",
     "MCPTool",
     "ToolSearchTool",
     "WebFetchTool",
