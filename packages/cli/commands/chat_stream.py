@@ -15,8 +15,10 @@ import typer
 
 from packages.cli.options import GlobalOptions, JsonOpt, ProviderOpt, SessionIdOpt, UserIdOpt
 from packages.cli.render import (
+    build_stream_event_view,
     console,
     print_error,
+    render_stream_event_view,
     render_approval_prompt,
     render_approval_request,
 )
@@ -86,23 +88,34 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
 
     async def _on_event(event: AgentEvent) -> None:
         nonlocal streamed_any, line_open, latest_cost
-        kind = event.event_kind or event.event_type.value
-        payload = event.payload or {}
-        if kind == "model.token":
-            token = str(payload.get("token") or payload.get("delta") or "")
-            if token:
+        view = build_stream_event_view(event)
+        if view.category == "token":
+            if view.text:
                 if not line_open:
                     console.print("assistant> ", end="")
                     line_open = True
-                console.print(token, end="", soft_wrap=True)
+                console.print(view.text, end="", soft_wrap=True)
                 streamed_any = True
-        elif kind == "model.usage" or kind == "run.token_budget":
-            latest_cost = payload
-        elif kind == "tool.pending_approval":
+            return
+
+        if view.category == "ignore":
+            return
+
+        if view.category == "usage":
+            latest_cost = view.payload
+
+        if view.category == "approval":
             if line_open:
                 console.print()
                 line_open = False
-            render_approval_request({"context": payload})
+            render_approval_request({"context": view.payload})
+            return
+
+        if view.category in {"thinking", "usage", "generic"} or (view.category == "run" and view.kind != "run.completed"):
+            if line_open:
+                console.print()
+                line_open = False
+            render_stream_event_view(view)
 
     svc = ChatService.from_env(provider=opts.provider)
     result = await svc.chat_stream(

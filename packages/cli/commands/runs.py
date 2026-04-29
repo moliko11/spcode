@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, Optional
@@ -20,9 +19,11 @@ import typer
 
 from packages.cli.options import GlobalOptions, JsonOpt, UserIdOpt
 from packages.cli.render import (
+    build_stream_event_view,
     console,
     print_error,
     print_json,
+    render_stream_event_view,
     render_plan_runs_table,
     render_plan_run_detail,
     _render_cost,
@@ -190,46 +191,4 @@ async def _parse_sse_events(lines: AsyncIterator[str]) -> AsyncIterator[dict[str
 
 
 def _render_run_event(event: dict[str, Any]) -> None:
-    kind = str(event.get("event_kind") or event.get("kind") or event.get("event_type") or "unknown")
-    payload = event.get("payload") or {}
-
-    if kind == "heartbeat":
-        return
-    if kind == "model.token":
-        token = payload.get("token") or payload.get("delta")
-        if token:
-            console.print(f"[cyan]token[/] {token}")
-        return
-    if kind == "model.thinking":
-        text = payload.get("text") or payload.get("thinking") or ""
-        if text:
-            console.print(f"[magenta]thinking[/] {text}")
-        return
-    if kind == "tool.pending_approval":
-        tool_name = payload.get("tool_name") or payload.get("name") or "tool"
-        console.print(f"[yellow]approval[/] waiting for {tool_name}")
-        return
-    if kind == "model.usage" or kind == "run.token_budget":
-        total = payload.get("total_tokens") or payload.get("budget_total_tokens") or 0
-        if total:
-            console.print(f"[dim]{kind}: total_tokens={total}[/]")
-        else:
-            console.print(f"[dim]{kind}[/]")
-        return
-    if kind.startswith("run."):
-        summary = event.get("final_output") or event.get("error") or payload.get("final_output") or ""
-        if summary:
-            console.print(f"[bold]{kind}[/] {summary}")
-        else:
-            console.print(f"[bold]{kind}[/]")
-        return
-    if kind == "run.started":
-        goal = event.get("goal") or payload.get("task") or ""
-        console.print(f"[green]run.started[/] {goal}")
-        return
-
-    step = event.get("step")
-    if step is None:
-        console.print(f"[dim]{kind}[/]")
-    else:
-        console.print(f"[dim]{kind}[/] step={step}")
+    render_stream_event_view(build_stream_event_view(event))

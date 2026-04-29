@@ -7,6 +7,7 @@ render.py — Rich 渲染工具集
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 from rich.console import Console
@@ -17,6 +18,17 @@ from rich import box
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+@dataclass(slots=True)
+class StreamEventView:
+    category: str
+    kind: str
+    label: str
+    text: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+    step: int | None = None
+    terminal_status: str | None = None
 
 
 # ── 通用 ─────────────────────────────────────────────────────────────────
@@ -39,6 +51,114 @@ def print_info(msg: str) -> None:
 
 
 # ── run / chat ────────────────────────────────────────────────────────────
+
+def build_stream_event_view(event: Any) -> StreamEventView:
+    payload = _event_payload(event)
+    kind = _event_kind(event)
+    step = _event_step(event)
+
+    if kind == "heartbeat":
+        return StreamEventView(category="ignore", kind=kind, label=kind, payload=payload, step=step)
+    if kind == "model.token":
+        token = str(payload.get("token") or payload.get("delta") or "")
+        return StreamEventView(category="token", kind=kind, label="token", text=token, payload=payload, step=step)
+    if kind == "model.thinking":
+        text = str(payload.get("text") or payload.get("thinking") or "")
+        return StreamEventView(category="thinking", kind=kind, label="thinking", text=text, payload=payload, step=step)
+    if kind == "tool.pending_approval":
+        tool_name = str(payload.get("tool_name") or payload.get("name") or "tool")
+        return StreamEventView(category="approval", kind=kind, label="approval", text=f"waiting for {tool_name}", payload=payload, step=step)
+    if kind in {"model.usage", "run.token_budget"}:
+        total = payload.get("total_tokens") or payload.get("budget_total_tokens") or 0
+        text = f"total_tokens={total}" if total else ""
+        return StreamEventView(category="usage", kind=kind, label=kind, text=text, payload=payload, step=step)
+    if kind == "run.started":
+        goal = str(_event_field(event, "goal") or payload.get("task") or "")
+        return StreamEventView(category="run", kind=kind, label=kind, text=goal, payload=payload, step=step)
+    if kind.startswith("run."):
+        summary = str(
+            _event_field(event, "final_output")
+            or _event_field(event, "error")
+            or payload.get("final_output")
+            or payload.get("error")
+            or ""
+        )
+        return StreamEventView(
+            category="run",
+            kind=kind,
+            label=kind,
+            text=summary,
+            payload=payload,
+            step=step,
+            terminal_status=kind.split(".", 1)[1],
+        )
+
+    text = f"step={step}" if step is not None else ""
+    return StreamEventView(category="generic", kind=kind, label=kind, text=text, payload=payload, step=step)
+
+
+def render_stream_event_view(view: StreamEventView) -> None:
+    if view.category == "ignore":
+        return
+    if view.category == "token":
+        if view.text:
+            console.print(f"[cyan]{view.label}[/] {view.text}")
+        return
+    if view.category == "thinking":
+        if view.text:
+            console.print(f"[magenta]{view.label}[/] {view.text}")
+        return
+    if view.category == "approval":
+        console.print(f"[yellow]{view.label}[/] {view.text}")
+        return
+    if view.category == "usage":
+        if view.text:
+            console.print(f"[dim]{view.label}: {view.text}[/]")
+        else:
+            console.print(f"[dim]{view.label}[/]")
+        return
+    if view.category == "run":
+        color = {
+            "started": "green",
+            "completed": "green",
+            "degraded": "yellow",
+            "waiting_human": "yellow",
+            "failed": "red",
+            "cancelled": "dim",
+            "resumed": "cyan",
+        }.get(view.terminal_status or "started", "white")
+        if view.text:
+            console.print(f"[{color}]{view.label}[/] {view.text}")
+        else:
+            console.print(f"[{color}]{view.label}[/]")
+        return
+
+    if view.text:
+        console.print(f"[dim]{view.label}[/] {view.text}")
+    else:
+        console.print(f"[dim]{view.label}[/]")
+
+
+def _event_field(event: Any, name: str) -> Any:
+    if hasattr(event, name):
+        return getattr(event, name)
+    if isinstance(event, dict):
+        return event.get(name)
+    return None
+
+
+def _event_payload(event: Any) -> dict[str, Any]:
+    payload = _event_field(event, "payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _event_kind(event: Any) -> str:
+    return str(_event_field(event, "event_kind") or _event_field(event, "kind") or _event_field(event, "event_type") or "unknown")
+
+
+def _event_step(event: Any) -> int | None:
+    step = _event_field(event, "step")
+    return step if isinstance(step, int) else None
 
 def render_chat_result(result: Any, *, show_cost: bool = True) -> None:
     """渲染 ChatRunResult。"""
