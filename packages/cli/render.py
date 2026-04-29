@@ -31,6 +31,111 @@ class StreamEventView:
     terminal_status: str | None = None
 
 
+@dataclass(slots=True)
+class ToolCallDraft:
+    key: str
+    name: str = "tool"
+    call_id: str | None = None
+    index: int | None = None
+    args_buffer: str = ""
+    announced: bool = False
+
+
+class StreamToolCallAggregator:
+    def __init__(self) -> None:
+        self._drafts: dict[str, ToolCallDraft] = {}
+
+    def ingest(self, event: Any) -> tuple[list[StreamEventView], bool]:
+        kind = _event_kind(event)
+        if kind == "model.tool_call_delta":
+            view = self._consume_delta(event)
+            return ([view] if view is not None else []), True
+
+        if kind in {
+            "model.completed",
+            "tool.started",
+            "tool.pending_approval",
+            "run.completed",
+            "run.failed",
+            "run.cancelled",
+            "run.degraded",
+            "run.waiting_human",
+        }:
+            return self.flush(), False
+
+        return [], False
+
+    def flush(self) -> list[StreamEventView]:
+        views = [self._draft_to_view(draft) for draft in self._drafts.values()]
+        self._drafts.clear()
+        return views
+
+    def _consume_delta(self, event: Any) -> StreamEventView | None:
+        payload = _event_payload(event)
+        delta = payload.get("delta")
+        if not isinstance(delta, dict):
+            return None
+
+        key = self._delta_key(delta)
+        draft = self._drafts.get(key)
+        if draft is None:
+            draft = ToolCallDraft(key=key)
+            self._drafts[key] = draft
+
+        if delta.get("name"):
+            draft.name = str(delta["name"])
+        if delta.get("id"):
+            draft.call_id = str(delta["id"])
+        if isinstance(delta.get("index"), int):
+            draft.index = int(delta["index"])
+
+        args_chunk = delta.get("args")
+        if args_chunk is None:
+            args_chunk = delta.get("arguments")
+        if args_chunk:
+            draft.args_buffer += str(args_chunk)
+
+        if not draft.announced and (draft.name != "tool" or draft.call_id is not None or draft.index is not None):
+            draft.announced = True
+            return StreamEventView(
+                category="tool_call",
+                kind="model.tool_call_delta",
+                label="tool_call",
+                text=f"{self._draft_display_name(draft)} building arguments...",
+                payload=payload,
+            )
+        return None
+
+    def _draft_to_view(self, draft: ToolCallDraft) -> StreamEventView:
+        display_name = self._draft_display_name(draft)
+        parsed = _try_parse_json(draft.args_buffer)
+        if isinstance(parsed, dict):
+            details = _format_tool_call_args(parsed)
+            text = f"{display_name} {details}" if details else display_name
+        elif draft.args_buffer.strip():
+            text = f"{display_name} {_shorten(draft.args_buffer.strip(), 160)}"
+        else:
+            text = f"{display_name} building arguments..."
+        return StreamEventView(
+            category="tool_call",
+            kind="model.tool_call_delta",
+            label="tool_call",
+            text=text,
+            payload={"name": draft.name, "call_id": draft.call_id, "index": draft.index},
+        )
+
+    def _draft_display_name(self, draft: ToolCallDraft) -> str:
+        suffix = f"[{draft.index}]" if draft.index is not None else ""
+        return f"{draft.name}{suffix}"
+
+    def _delta_key(self, delta: dict[str, Any]) -> str:
+        if delta.get("id"):
+            return f"id:{delta['id']}"
+        if isinstance(delta.get("index"), int):
+            return f"index:{delta['index']}"
+        return f"anon:{len(self._drafts)}"
+
+
 # ── 通用 ─────────────────────────────────────────────────────────────────
 
 def print_json(data: Any) -> None:
@@ -208,6 +313,33 @@ def _event_kind(event: Any) -> str:
 def _event_step(event: Any) -> int | None:
     step = _event_field(event, "step")
     return step if isinstance(step, int) else None
+
+
+def _try_parse_json(text: str) -> Any:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+
+def _format_tool_call_args(args: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key, value in args.items():
+        if isinstance(value, str):
+            value_text = value
+        else:
+            value_text = json.dumps(value, ensure_ascii=False)
+        parts.append(f"{key}={_shorten(value_text, 80)}")
+    return " ".join(parts)
+
+
+def _shorten(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 def render_chat_result(result: Any, *, show_cost: bool = True) -> None:
     """渲染 ChatRunResult。"""

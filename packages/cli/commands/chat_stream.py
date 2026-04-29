@@ -15,6 +15,7 @@ import typer
 
 from packages.cli.options import GlobalOptions, JsonOpt, ProviderOpt, SessionIdOpt, UserIdOpt
 from packages.cli.render import (
+    StreamToolCallAggregator,
     build_stream_event_view,
     console,
     print_error,
@@ -85,9 +86,20 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
     streamed_any = False
     line_open = False
     latest_cost: dict[str, object] = {}
+    tool_call_aggregator = StreamToolCallAggregator()
 
     async def _on_event(event: AgentEvent) -> None:
         nonlocal streamed_any, line_open, latest_cost
+        aggregated_views, handled = tool_call_aggregator.ingest(event)
+        if aggregated_views:
+            if line_open:
+                console.print()
+                line_open = False
+            for aggregated_view in aggregated_views:
+                render_stream_event_view(aggregated_view)
+        if handled:
+            return
+
         view = build_stream_event_view(event)
         if view.category == "token":
             if view.text:
@@ -148,6 +160,14 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
             ),
             on_event=_on_event,
         )
+
+    remaining_views = tool_call_aggregator.flush()
+    if remaining_views:
+        if line_open:
+            console.print()
+            line_open = False
+        for remaining_view in remaining_views:
+            render_stream_event_view(remaining_view)
 
     if line_open:
         console.print()

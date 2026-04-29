@@ -19,6 +19,7 @@ import typer
 
 from packages.cli.options import GlobalOptions, JsonOpt, UserIdOpt
 from packages.cli.render import (
+    StreamToolCallAggregator,
     build_stream_event_view,
     console,
     print_error,
@@ -138,10 +139,18 @@ async def _watch(plan_run_id: str, timeout: int, api_url: str | None = None) -> 
 
 async def _watch_remote(run_id: str, timeout: int, api_url: str) -> None:
     console.print(f"[dim]Watching run_id={run_id} via SSE  (Ctrl+C to stop)[/]\n")
+    tool_call_aggregator = StreamToolCallAggregator()
     async for event in _stream_remote_events(api_url, run_id, timeout):
+        aggregated_views, handled = tool_call_aggregator.ingest(event)
+        for aggregated_view in aggregated_views:
+            render_stream_event_view(aggregated_view)
+        if handled:
+            continue
         kind = str(event.get("event_kind") or event.get("kind") or event.get("event_type") or "unknown")
         _render_run_event(event)
         if kind in {"run.completed", "run.failed", "run.cancelled", "run.waiting_human", "run.degraded"}:
+            for remaining_view in tool_call_aggregator.flush():
+                render_stream_event_view(remaining_view)
             return
 
 
