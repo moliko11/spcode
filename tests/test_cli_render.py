@@ -39,3 +39,23 @@ def test_build_stream_event_view_for_usage_event() -> None:
 
     assert view.category == "usage"
     assert view.text == "total_tokens=42"
+
+
+def test_build_stream_event_view_for_tool_started_event() -> None:
+    view = build_stream_event_view(
+        {"kind": "tool.started", "payload": {"tool_name": "bash", "risk_level": "high"}}
+    )
+
+    assert view.category == "tool"
+    assert view.label == "tool.started"
+    assert view.text == "bash | risk=high"
+
+
+def test_build_stream_event_view_for_tool_call_delta_event() -> None:
+    view = build_stream_event_view(
+        {"kind": "model.tool_call_delta", "payload": {"delta": {"name": "grep", "arguments": "{\"q\":\"x\"}"}}}
+    )
+
+    assert view.category == "tool_call"
+    assert view.label == "tool_call"
+    assert "grep" in view.text

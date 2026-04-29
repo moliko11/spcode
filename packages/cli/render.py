@@ -65,9 +65,38 @@ def build_stream_event_view(event: Any) -> StreamEventView:
     if kind == "model.thinking":
         text = str(payload.get("text") or payload.get("thinking") or "")
         return StreamEventView(category="thinking", kind=kind, label="thinking", text=text, payload=payload, step=step)
+    if kind == "model.tool_call_delta":
+        delta = payload.get("delta")
+        text = json.dumps(delta, ensure_ascii=False) if delta is not None else ""
+        return StreamEventView(category="tool_call", kind=kind, label="tool_call", text=text, payload=payload, step=step)
     if kind == "tool.pending_approval":
         tool_name = str(payload.get("tool_name") or payload.get("name") or "tool")
         return StreamEventView(category="approval", kind=kind, label="approval", text=f"waiting for {tool_name}", payload=payload, step=step)
+    if kind.startswith("tool."):
+        tool_name = str(payload.get("tool_name") or payload.get("name") or "tool")
+        details: list[str] = []
+        if kind == "tool.started":
+            risk = payload.get("risk_level")
+            if risk:
+                details.append(f"risk={risk}")
+        elif kind == "tool.progress":
+            progress_text = payload.get("message") or payload.get("stdout") or payload.get("stderr") or payload.get("status")
+            if progress_text:
+                details.append(str(progress_text))
+        elif kind in {"tool.completed", "tool.failed"}:
+            latency_ms = payload.get("latency_ms")
+            if latency_ms:
+                details.append(f"latency={latency_ms}ms")
+            retry_count = payload.get("retry_count")
+            if retry_count:
+                details.append(f"retries={retry_count}")
+            error = payload.get("error")
+            if error:
+                details.append(str(error))
+        text = tool_name
+        if details:
+            text = f"{tool_name} | {' | '.join(details)}"
+        return StreamEventView(category="tool", kind=kind, label=kind, text=text, payload=payload, step=step)
     if kind in {"model.usage", "run.token_budget"}:
         total = payload.get("total_tokens") or payload.get("budget_total_tokens") or 0
         text = f"total_tokens={total}" if total else ""
@@ -108,8 +137,28 @@ def render_stream_event_view(view: StreamEventView) -> None:
         if view.text:
             console.print(f"[magenta]{view.label}[/] {view.text}")
         return
+    if view.category == "tool_call":
+        if view.text:
+            console.print(f"[blue]{view.label}[/] {view.text}")
+        else:
+            console.print(f"[blue]{view.label}[/]")
+        return
     if view.category == "approval":
         console.print(f"[yellow]{view.label}[/] {view.text}")
+        return
+    if view.category == "tool":
+        color = {
+            "tool.started": "blue",
+            "tool.progress": "cyan",
+            "tool.completed": "green",
+            "tool.failed": "red",
+            "tool.cached": "green",
+            "tool.retried": "yellow",
+        }.get(view.kind, "white")
+        if view.text:
+            console.print(f"[{color}]{view.label}[/] {view.text}")
+        else:
+            console.print(f"[{color}]{view.label}[/]")
         return
     if view.category == "usage":
         if view.text:

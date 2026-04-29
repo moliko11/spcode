@@ -111,7 +111,7 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
             render_approval_request({"context": view.payload})
             return
 
-        if view.category in {"thinking", "usage", "generic"} or (view.category == "run" and view.kind != "run.completed"):
+        if view.category in {"thinking", "usage", "generic", "tool", "tool_call"} or (view.category == "run" and view.kind != "run.completed"):
             if line_open:
                 console.print()
                 line_open = False
