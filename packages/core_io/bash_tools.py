@@ -80,15 +80,19 @@ class BashSessionManager:
         stderr = self._truncate(stderr_raw.decode("utf-8", errors="replace"))
         updated_cwd = self._extract_cwd_from_output(stdout, session.cwd)
         session.cwd = updated_cwd
+        stdout = self._strip_cwd_marker(stdout)
+        ok = process.returncode == 0
+        error = None if ok else (stderr.strip() or stdout.strip() or f"command exited with code {process.returncode}")
 
         return {
-            "ok": process.returncode == 0,
+            "ok": ok,
             "tool_name": "bash",
             "command": command,
             "session_id": session.session_id,
             "cwd": updated_cwd,
             "stdout": stdout,
             "stderr": stderr,
+            "error": error,
             "exit_code": process.returncode,
             "changed_files": [],
             "metadata": {"restart": restart},
@@ -133,6 +137,13 @@ class BashSessionManager:
                 path = Path(line[len(marker) :].strip())
                 return relative_to_workspace(self.workspace_root, path)
         return fallback_cwd
+
+    def _strip_cwd_marker(self, stdout: str) -> str:
+        marker = "__CODEX_CWD__="
+        lines = [line for line in stdout.splitlines() if not line.startswith(marker)]
+        if stdout.endswith(("\n", "\r")) and lines:
+            return "\n".join(lines) + "\n"
+        return "\n".join(lines)
 
 
 class BashTool:

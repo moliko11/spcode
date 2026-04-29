@@ -344,12 +344,15 @@ class ToolExecutor:
             )
         if isinstance(raw, dict):
             ok = bool(raw.get("ok", True))
+            raw_error = raw.get("error")
+            if not ok and not raw_error:
+                raw_error = raw.get("stderr") or raw.get("stdout") or "tool execution failed"
             return ToolResult(
                 call_id=call.call_id,
                 tool_name=call.tool_name,
                 ok=ok,
                 output=json.dumps(raw, ensure_ascii=False),
-                error=None if ok else str(raw.get("error", "tool execution failed")),
+                error=None if ok else str(raw_error),
                 metadata=dict(raw.get("metadata", {})) if isinstance(raw.get("metadata"), dict) else {},
                 stdout=raw.get("stdout") if isinstance(raw.get("stdout"), str) else None,
                 stderr=raw.get("stderr") if isinstance(raw.get("stderr"), str) else None,
