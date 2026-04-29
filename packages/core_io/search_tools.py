@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from fnmatch import fnmatch
@@ -96,7 +97,7 @@ class GrepTool(_SearchToolMixin):
         case_sensitive = bool(arguments.get("case_sensitive", False))
         max_matches = int(arguments.get("max_matches", 200))
 
-        command = ["rg", "--line-number", "--color", "never", "--no-heading"]
+        command = ["rg", "--json", "--color", "never"]
         if not case_sensitive:
             command.append("-i")
         if file_glob:
@@ -114,16 +115,7 @@ class GrepTool(_SearchToolMixin):
         if completed.returncode not in {0, 1}:
             raise RuntimeError(completed.stderr or "rg failed")
 
-        matches: list[dict[str, Any]] = []
-        for line in completed.stdout.splitlines():
-            parts = line.split(":", 2)
-            if len(parts) != 3:
-                continue
-            file_path, line_no, line_text = parts
-            rel = self._relative(Path(file_path))
-            matches.append({"path": rel, "line_no": int(line_no), "line_text": line_text})
-            if len(matches) >= max_matches:
-                break
+        matches = self._parse_rg_json(completed.stdout, max_matches=max_matches)
 
         result = GrepResult(
             ok=True,
@@ -136,6 +128,34 @@ class GrepTool(_SearchToolMixin):
             truncated=completed.returncode == 0 and len(matches) >= max_matches,
         )
         return result.to_dict()
+
+    def _parse_rg_json(self, stdout: str, max_matches: int) -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        for line in stdout.splitlines():
+            if len(matches) >= max_matches:
+                break
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") != "match":
+                continue
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            path_data = data.get("path") if isinstance(data.get("path"), dict) else {}
+            lines_data = data.get("lines") if isinstance(data.get("lines"), dict) else {}
+            raw_path = path_data.get("text")
+            line_text = lines_data.get("text", "")
+            line_no = data.get("line_number")
+            if not raw_path or not isinstance(line_no, int):
+                continue
+            matches.append(
+                {
+                    "path": self._relative(Path(raw_path)),
+                    "line_no": line_no,
+                    "line_text": str(line_text).rstrip("\n\r"),
+                }
+            )
+        return matches
 
     def _run_python(self, arguments: dict[str, Any]) -> dict[str, Any]:
         pattern = str(arguments.get("pattern", "")).strip()

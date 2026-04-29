@@ -46,3 +46,20 @@ def test_grep_file_glob_filters_files(tmp_path: Path) -> None:
 
     assert result["match_count"] == 1
     assert result["matches"][0]["path"] == "a.py"
+
+
+def test_grep_rg_json_parser_handles_windows_paths(tmp_path: Path) -> None:
+    tool = GrepTool(workspace_root=tmp_path)
+    target = tmp_path / "dir" / "a.txt"
+    target.parent.mkdir()
+    target.write_text("needle\n", encoding="utf-8")
+    escaped = str(target).replace("\\", "\\\\")
+    payload = (
+        '{"type":"match","data":{"path":{"text":"'
+        + escaped
+        + '"},"lines":{"text":"needle\\n"},"line_number":1}}'
+    )
+
+    matches = tool._parse_rg_json(payload, max_matches=20)
+
+    assert matches == [{"path": "dir/a.txt", "line_no": 1, "line_text": "needle"}]
