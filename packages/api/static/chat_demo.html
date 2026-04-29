@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Leaning Chat Demo</title>
+  <style>
+    :root {
+      --bg: #f6f2e8;
+      --panel: rgba(255, 251, 245, 0.88);
+      --ink: #1f2a22;
+      --muted: #6c756c;
+      --line: rgba(31, 42, 34, 0.12);
+      --accent: #0e7a5f;
+      --accent-2: #b55d35;
+      --warn: #9f4f24;
+      --shadow: 0 18px 60px rgba(48, 37, 23, 0.12);
+      --radius: 24px;
+      --mono: "JetBrains Mono", "Cascadia Code", monospace;
+      --sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(181, 93, 53, 0.16), transparent 30%),
+        radial-gradient(circle at right, rgba(14, 122, 95, 0.14), transparent 28%),
+        linear-gradient(180deg, #f4efe3 0%, #f6f2e8 48%, #efe9db 100%);
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 28px auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 20px;
+    }
+
+    .panel {
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .control {
+      padding: 22px;
+      position: sticky;
+      top: 24px;
+      height: fit-content;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(14, 122, 95, 0.08);
+      color: var(--accent);
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .lead {
+      margin: 0 0 20px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    form {
+      display: grid;
+      gap: 14px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    input, textarea, button {
+      font: inherit;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 14px 15px;
+      border-radius: 16px;
+      border: 1px solid rgba(31, 42, 34, 0.15);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    input:focus, textarea:focus {
+      border-color: rgba(14, 122, 95, 0.5);
+      box-shadow: 0 0 0 4px rgba(14, 122, 95, 0.12);
+    }
+
+    textarea {
+      min-height: 150px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 999px;
+      padding: 13px 18px;
+      font-weight: 700;
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--accent), #159973);
+      color: #fff;
+      box-shadow: 0 10px 28px rgba(14, 122, 95, 0.26);
+    }
+
+    .ghost {
+      background: rgba(31, 42, 34, 0.06);
+      color: var(--ink);
+    }
+
+    .meta {
+      margin-top: 18px;
+      display: grid;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .meta strong {
+      color: var(--ink);
+    }
+
+    .stream {
+      min-height: calc(100vh - 56px);
+      padding: 22px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 14px;
+    }
+
+    .stream-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: center;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .stream-title {
+      font-size: 22px;
+      margin: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      background: rgba(181, 93, 53, 0.1);
+      color: var(--accent-2);
+    }
+
+    .status.running {
+      background: rgba(14, 122, 95, 0.1);
+      color: var(--accent);
+    }
+
+    .status.done {
+      background: rgba(31, 42, 34, 0.08);
+      color: var(--ink);
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .summary-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.62);
+      border: 1px solid var(--line);
+    }
+
+    .summary-card span {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+
+    .summary-card strong {
+      font-size: 18px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .bubble {
+      border-radius: 22px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .bubble.user {
+      background: linear-gradient(135deg, rgba(14, 122, 95, 0.12), rgba(14, 122, 95, 0.04));
+    }
+
+    .bubble h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .bubble p, .bubble pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.6;
+    }
+
+    .thinking {
+      color: var(--warn);
+      background: rgba(181, 93, 53, 0.08);
+    }
+
+    .event-list {
+      margin-top: 8px;
+      display: grid;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .event-item {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(31, 42, 34, 0.04);
+      border: 1px dashed rgba(31, 42, 34, 0.12);
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .control {
+        position: static;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel control">
+      <div class="eyebrow">P4 Minimal Web</div>
+      <h1>Chat Streaming Demo</h1>
+      <p class="lead">这个页面直接消费现有的 <code>POST /api/chat/stream</code>，验证从用户输入到 SSE 事件再到可见 UI 的整条主链路。</p>
+
+      <form id="chat-form">
+        <label>
+          User ID
+          <input id="user-id" name="user_id" value="demo-user">
+        </label>
+        <label>
+          Session ID
+          <input id="session-id" name="session_id" value="demo-web-session">
+        </label>
+        <label>
+          Message
+          <textarea id="message" name="message" placeholder="比如：帮我分析 runtime_data 目录结构，并说明哪些文件是 checkpoint。"></textarea>
+        </label>
+        <div class="actions">
+          <button type="submit" class="primary">Start Streaming</button>
+          <button type="button" class="ghost" id="reset-btn">Reset View</button>
+        </div>
+      </form>
+
+      <div class="meta">
+        <div><strong>访问地址：</strong> <span>/demo/chat</span></div>
+        <div><strong>接口协议：</strong> <span>fetch + SSE 文本流解析</span></div>
+        <div><strong>当前限制：</strong> <span>仅演示 chat 流；审批按钮和 artifacts 还未接。</span></div>
+      </div>
+    </section>
+
+    <section class="panel stream">
+      <div class="stream-header">
+        <div>
+          <p class="eyebrow">Live Timeline</p>
+          <h2 class="stream-title">Run Event Feed</h2>
+        </div>
+        <div class="status" id="run-status">Idle</div>
+      </div>
+
+      <section class="summary">
+        <article class="summary-card">
+          <span>Run ID</span>
+          <strong id="run-id">-</strong>
+        </article>
+        <article class="summary-card">
+          <span>Tokens</span>
+          <strong id="token-usage">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Cost USD</span>
+          <strong id="cost-usage">0.000000</strong>
+        </article>
+      </section>
+
+      <section class="timeline" id="timeline">
+        <article class="bubble">
+          <h3>System</h3>
+          <p>提交一条消息后，这里会展示 user / assistant / thinking / event timeline。</p>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('chat-form');
+    const resetBtn = document.getElementById('reset-btn');
+    const timeline = document.getElementById('timeline');
+    const statusEl = document.getElementById('run-status');
+    const runIdEl = document.getElementById('run-id');
+    const tokenUsageEl = document.getElementById('token-usage');
+    const costUsageEl = document.getElementById('cost-usage');
+
+    let currentAssistant = null;
+    let currentThinking = null;
+    let currentEvents = null;
+    let currentAbort = null;
+
+    function setStatus(text, klass = '') {
+      statusEl.textContent = text;
+      statusEl.className = `status ${klass}`.trim();
+    }
+
+    function clearTimeline() {
+      timeline.innerHTML = '';
+      currentAssistant = null;
+      currentThinking = null;
+      currentEvents = null;
+      runIdEl.textContent = '-';
+      tokenUsageEl.textContent = '0';
+      costUsageEl.textContent = '0.000000';
+      setStatus('Idle');
+    }
+
+    function addBubble(kind, title, initialText = '') {
+      const article = document.createElement('article');
+      article.className = `bubble ${kind}`.trim();
+      article.innerHTML = `<h3>${title}</h3><p></p>`;
+      article.querySelector('p').textContent = initialText;
+      timeline.appendChild(article);
+      return article.querySelector('p');
+    }
+
+    function ensureAssistant() {
+      if (!currentAssistant) {
+        currentAssistant = addBubble('assistant', 'Assistant');
+      }
+      return currentAssistant;
+    }
+
+    function ensureThinking() {
+      if (!currentThinking) {
+        const article = document.createElement('article');
+        article.className = 'bubble thinking';
+        article.innerHTML = '<h3>Thinking</h3><p></p>';
+        timeline.appendChild(article);
+        currentThinking = article.querySelector('p');
+      }
+      return currentThinking;
+    }
+
+    function ensureEvents() {
+      if (!currentEvents) {
+        const article = document.createElement('article');
+        article.className = 'bubble';
+        article.innerHTML = '<h3>Events</h3><div class="event-list"></div>';
+        timeline.appendChild(article);
+        currentEvents = article.querySelector('.event-list');
+      }
+      return currentEvents;
+    }
+
+    function pushEvent(kind, payload) {
+      const list = ensureEvents();
+      const item = document.createElement('div');
+      item.className = 'event-item';
+      item.textContent = `${kind} ${JSON.stringify(payload ?? {})}`;
+      list.prepend(item);
+    }
+
+    function parseEventBlock(block) {
+      const event = { event: 'message', data: '', id: '' };
+      for (const line of block.split(/\r?\n/)) {
+        if (!line) continue;
+        if (line.startsWith('event:')) event.event = line.slice(6).trim();
+        else if (line.startsWith('data:')) event.data += line.slice(5).trim();
+        else if (line.startsWith('id:')) event.id = line.slice(3).trim();
+      }
+      return event;
+    }
+
+    async function streamChat(payload) {
+      if (currentAbort) currentAbort.abort();
+      currentAbort = new AbortController();
+      clearTimeline();
+      addBubble('user', 'User', payload.message);
+      setStatus('Streaming', 'running');
+
+      const response = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify(payload),
+        signal: currentAbort.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`stream request failed: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() ?? '';
+
+        for (const part of parts) {
+          const parsed = parseEventBlock(part);
+          if (!parsed.data) continue;
+
+          let data;
+          try {
+            data = JSON.parse(parsed.data);
+          } catch {
+            continue;
+          }
+
+          const kind = parsed.event || data.event_kind || data.kind || 'unknown';
+          const payloadData = data.payload || {};
+          if (data.run_id) runIdEl.textContent = data.run_id;
+
+          switch (kind) {
+            case 'model.token':
+              ensureAssistant().textContent += payloadData.token || payloadData.delta || '';
+              break;
+            case 'model.thinking':
+              ensureThinking().textContent += payloadData.text || payloadData.delta || '';
+              break;
+            case 'model.usage':
+            case 'run.token_budget':
+              tokenUsageEl.textContent = String(payloadData.total_tokens ?? 0);
+              costUsageEl.textContent = Number(payloadData.cost_usd ?? 0).toFixed(6);
+              break;
+            case 'run.completed':
+              if (data.final_output) {
+                ensureAssistant().textContent = data.final_output;
+              }
+              setStatus('Completed', 'done');
+              break;
+            case 'run.failed':
+              setStatus('Failed');
+              break;
+            default:
+              break;
+          }
+
+          if (!['model.token', 'model.thinking'].includes(kind)) {
+            pushEvent(kind, payloadData);
+          }
+        }
+      }
+
+      if (statusEl.textContent === 'Streaming') {
+        setStatus('Completed', 'done');
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const payload = {
+        user_id: document.getElementById('user-id').value.trim() || 'demo-user',
+        session_id: document.getElementById('session-id').value.trim() || 'demo-web-session',
+        message: document.getElementById('message').value.trim(),
+      };
+
+      if (!payload.message) {
+        setStatus('Message required');
+        return;
+      }
+
+      try {
+        await streamChat(payload);
+      } catch (error) {
+        setStatus('Error');
+        pushEvent('client.error', { message: String(error) });
+      }
+    });
+
+    resetBtn.addEventListener('click', () => {
+      if (currentAbort) currentAbort.abort();
+      clearTimeline();
+    });
+  </script>
+</body>
+</html>

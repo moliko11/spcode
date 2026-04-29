@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from packages.app_service.run_service import RunManager
 from packages.api.routes.chat import router as chat_router
+from packages.api.routes.demo import router as demo_router
 from packages.api.routes.events import router as events_router
 from packages.api.routes.plans import router as plans_router
 from packages.api.routes.query import router as query_router
@@ -85,6 +86,7 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
 # ── 注册路由 ──────────────────────────────────────────────────────────────
 
 app.include_router(chat_router)
+app.include_router(demo_router)
 app.include_router(events_router)
 app.include_router(plans_router)
 app.include_router(query_router)

@@ -50,6 +50,13 @@ async def test_docs_available(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_demo_chat_page_available(api_client: AsyncClient) -> None:
+    r = await api_client.get("/demo/chat")
+    assert r.status_code == 200
+    assert "Chat Streaming Demo" in r.text
+
+
+@pytest.mark.anyio
 async def test_tools_endpoint(api_client: AsyncClient) -> None:
     r = await api_client.get("/api/tools")
     assert r.status_code == 200
