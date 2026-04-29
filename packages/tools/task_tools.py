@@ -81,9 +81,16 @@ class _TaskToolBase:
         raise ValueError(f"task not found: {task_id}")
 
     def _find_plan_containing_task(self, task_id: str) -> TaskPlan:
-        for plan in reversed(self.plan_store.list_recent(limit=200)):
-            if any(step.step_id == task_id for step in plan.steps):
-                return plan
+        matches = [
+            plan
+            for plan in self.plan_store.list_recent(limit=200)
+            if any(step.step_id == task_id for step in plan.steps)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            plan_ids = ", ".join(plan.plan_id for plan in matches[:5])
+            raise ValueError(f"task_id is ambiguous; provide plan_id. matches: {plan_ids}")
         raise ValueError(f"task not found: {task_id}")
 
     def _step_to_dict(self, step: TaskStep, plan_id: str) -> dict[str, Any]:
@@ -91,6 +98,14 @@ class _TaskToolBase:
         data["task_id"] = step.step_id
         data["plan_id"] = plan_id
         return data
+
+    def _validate_dependencies(self, plan: TaskPlan, dependencies: list[str], *, task_id: str | None = None) -> None:
+        existing = {step.step_id for step in plan.steps}
+        missing = [dep for dep in dependencies if dep not in existing]
+        if missing:
+            raise ValueError(f"dependencies not found in plan: {', '.join(missing)}")
+        if task_id and task_id in dependencies:
+            raise ValueError("task cannot depend on itself")
 
 
 class TaskCreateTool(_TaskToolBase):
@@ -107,12 +122,14 @@ class TaskCreateTool(_TaskToolBase):
         task_id = str(arguments.get("task_id") or f"task_{uuid.uuid4().hex[:8]}")
         if any(step.step_id == task_id for step in plan.steps):
             raise ValueError(f"task already exists: {task_id}")
+        dependencies = _as_list(arguments.get("dependencies"))
+        self._validate_dependencies(plan, dependencies, task_id=task_id)
 
         step = TaskStep(
             step_id=task_id,
             title=str(arguments.get("title") or task_id),
             description=str(arguments.get("description") or ""),
-            dependencies=_as_list(arguments.get("dependencies")),
+            dependencies=dependencies,
             acceptance_criteria=_as_list(arguments.get("acceptance_criteria")),
             suggested_tools=_as_list(arguments.get("suggested_tools")),
             metadata={
@@ -162,7 +179,9 @@ class TaskUpdateTool(_TaskToolBase):
         if "acceptance_criteria" in arguments:
             step.acceptance_criteria = _as_list(arguments.get("acceptance_criteria"))
         if "dependencies" in arguments:
-            step.dependencies = _as_list(arguments.get("dependencies"))
+            dependencies = _as_list(arguments.get("dependencies"))
+            self._validate_dependencies(plan, dependencies, task_id=task_id)
+            step.dependencies = dependencies
         if "target_files" in arguments:
             step.metadata["target_files"] = _as_list(arguments.get("target_files"))
         if isinstance(arguments.get("artifacts"), list):
@@ -187,7 +206,18 @@ class TaskUpdateTool(_TaskToolBase):
         }
 
     def _validate_transition(self, old: StepStatus, new: StepStatus) -> None:
-        if old in {StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED} and new == StepStatus.RUNNING:
+        if old == new:
+            return
+        allowed = {
+            StepStatus.PENDING: {StepStatus.READY, StepStatus.RUNNING, StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
+            StepStatus.READY: {StepStatus.RUNNING, StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
+            StepStatus.RUNNING: {StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
+            StepStatus.WAITING_HUMAN: {StepStatus.RUNNING, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
+            StepStatus.COMPLETED: set(),
+            StepStatus.FAILED: {StepStatus.PENDING, StepStatus.SKIPPED},
+            StepStatus.SKIPPED: set(),
+        }
+        if new not in allowed.get(old, set()):
             raise ValueError(f"invalid task status transition: {old.value} -> {new.value}")
 
     def _sync_plan_run(self, plan_run_id: str, step: TaskStep) -> None:

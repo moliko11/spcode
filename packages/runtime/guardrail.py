@@ -143,6 +143,8 @@ class GuardrailEngine:
             action = arguments.get("action")
             if action is not None and not isinstance(action, str):
                 raise GuardrailViolation(f"{tool_name}.action must be a string")
+        elif tool_name in {"task_create", "task_update", "task_list", "task_output", "task_stop"}:
+            self._validate_task_tool_args(tool_name, arguments)
 
     def validate_tool_result(self, result: ToolResult) -> None:
         if result.stdout and "\0" in result.stdout:
@@ -168,3 +170,29 @@ class GuardrailEngine:
         workspace_resolve(path)
         if require_content and not isinstance(arguments.get("content"), str):
             raise GuardrailViolation(f"{tool_name}.content must be a string")
+
+    def _validate_task_tool_args(self, tool_name: str, arguments: dict[str, object]) -> None:
+        for key in ("plan_id", "plan_run_id", "task_id", "status", "title", "description", "reason"):
+            value = arguments.get(key)
+            if value is not None and not isinstance(value, str):
+                raise GuardrailViolation(f"{tool_name}.{key} must be a string")
+        for key in ("dependencies", "acceptance_criteria", "suggested_tools", "target_files", "artifacts", "evidence"):
+            value = arguments.get(key)
+            if value is not None and not isinstance(value, list):
+                raise GuardrailViolation(f"{tool_name}.{key} must be a list")
+        if tool_name == "task_create":
+            title = arguments.get("title")
+            if not isinstance(title, str) or not title.strip():
+                raise GuardrailViolation("task_create.title must be a non-empty string")
+        if tool_name == "task_update":
+            task_id = arguments.get("task_id")
+            if not isinstance(task_id, str) or not task_id.strip():
+                raise GuardrailViolation("task_update.task_id must be a non-empty string")
+            status = arguments.get("status")
+            allowed = {"pending", "ready", "running", "waiting_human", "completed", "failed", "skipped", "blocked", "cancelled"}
+            if status is not None and status not in allowed:
+                raise GuardrailViolation(f"task_update.status must be one of: {', '.join(sorted(allowed))}")
+        if tool_name in {"task_list", "task_output", "task_stop"}:
+            limit = arguments.get("limit")
+            if limit is not None and (not isinstance(limit, int) or limit < 1):
+                raise GuardrailViolation(f"{tool_name}.limit must be a positive integer")

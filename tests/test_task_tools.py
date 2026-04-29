@@ -14,6 +14,7 @@ from packages.tools import (
     TaskStopTool,
     TaskUpdateTool,
 )
+from packages.runtime.guardrail import GuardrailEngine, GuardrailViolation
 
 
 def _stores(tmp_path: Path) -> tuple[PlanStore, PlanRunStore]:
@@ -97,3 +98,67 @@ def test_task_update_can_sync_plan_run(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.step_runs[0].status == StepRunStatus.COMPLETED
     assert loaded.step_runs[0].output == "tests passed"
+
+
+def test_task_create_rejects_missing_dependency(tmp_path: Path) -> None:
+    plan_store, plan_run_store = _stores(tmp_path)
+    create = TaskCreateTool(plan_store=plan_store, plan_run_store=plan_run_store)
+    created = asyncio.run(create.arun({"task_id": "task-root", "title": "Root"}))
+
+    try:
+        asyncio.run(
+            create.arun(
+                {
+                    "plan_id": created["plan_id"],
+                    "task_id": "task-child",
+                    "title": "Child",
+                    "dependencies": ["missing-task"],
+                }
+            )
+        )
+    except ValueError as exc:
+        assert "dependencies not found" in str(exc)
+    else:
+        raise AssertionError("expected missing dependency to fail")
+
+
+def test_task_update_rejects_ambiguous_task_id(tmp_path: Path) -> None:
+    plan_store, plan_run_store = _stores(tmp_path)
+    create = TaskCreateTool(plan_store=plan_store, plan_run_store=plan_run_store)
+    update = TaskUpdateTool(plan_store=plan_store, plan_run_store=plan_run_store)
+    asyncio.run(create.arun({"task_id": "same-id", "title": "First"}))
+    asyncio.run(create.arun({"task_id": "same-id", "title": "Second"}))
+
+    try:
+        asyncio.run(update.arun({"task_id": "same-id", "status": "running"}))
+    except ValueError as exc:
+        assert "provide plan_id" in str(exc)
+    else:
+        raise AssertionError("expected ambiguous task_id to fail")
+
+
+def test_task_update_rejects_invalid_terminal_transition(tmp_path: Path) -> None:
+    plan_store, plan_run_store = _stores(tmp_path)
+    create = TaskCreateTool(plan_store=plan_store, plan_run_store=plan_run_store)
+    update = TaskUpdateTool(plan_store=plan_store, plan_run_store=plan_run_store)
+    created = asyncio.run(create.arun({"task_id": "task-c", "title": "Complete"}))
+    asyncio.run(update.arun({"plan_id": created["plan_id"], "task_id": "task-c", "status": "completed"}))
+
+    try:
+        asyncio.run(update.arun({"plan_id": created["plan_id"], "task_id": "task-c", "status": "running"}))
+    except ValueError as exc:
+        assert "invalid task status transition" in str(exc)
+    else:
+        raise AssertionError("expected invalid transition to fail")
+
+
+def test_guardrail_validates_task_tool_args() -> None:
+    guardrail = GuardrailEngine()
+
+    guardrail.validate_tool_args("task_create", {"title": "Task"})
+    try:
+        guardrail.validate_tool_args("task_create", {"title": ""})
+    except GuardrailViolation as exc:
+        assert "non-empty" in str(exc)
+    else:
+        raise AssertionError("expected empty title to fail")
