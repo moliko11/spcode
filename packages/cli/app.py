@@ -155,9 +155,10 @@ def _handle_slash(raw: str, opts: GlobalOptions) -> None:
 
 
 # ── 子命令注册 ─────────────────────────────────────────────────────────────
-from .commands import chat, runs, plans, approvals, memory, serve  # noqa: E402
+from .commands import chat, chat_stream, runs, plans, approvals, memory, serve  # noqa: E402
 
 app.add_typer(chat.app,      name="chat",      help="单轮/多轮 chat")
+app.add_typer(chat_stream.app, name="chat-stream", help="终端流式 chat（新接口）")
 app.add_typer(runs.app,      name="runs",      help="查看 / 监控 run")
 app.add_typer(plans.app,     name="plans",     help="生成 / 查看计划")
 app.add_typer(approvals.app, name="approvals", help="处理待审批操作")

@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from packages.runtime.agent_loop import AgentRuntime
 from packages.runtime.bootstrap import build_runtime, build_llm
-from packages.runtime.models import AgentState, RunStatus
+from packages.runtime.models import AgentEvent, AgentState, EventType, RunStatus
 
 
 @dataclass
@@ -100,6 +100,25 @@ class ChatService:
         )
         return _state_to_result(state)
 
+    async def chat_stream(
+        self,
+        user_id: str,
+        session_id: str,
+        message: str,
+        on_event: "EventCallback | None" = None,
+    ) -> ChatRunResult:
+        """执行一轮 chat，并在运行过程中把事件回调给调用方。"""
+        return await self._run_with_stream(
+            runner=lambda: self._runtime.chat(
+                user_id=user_id,
+                session_id=session_id,
+                message=message,
+            ),
+            on_event=on_event,
+            session_id=session_id,
+            message=message,
+        )
+
     async def approve(
         self,
         run_id: str,
@@ -115,6 +134,26 @@ class ChatService:
             },
         )
         return _state_to_result(state)
+
+    async def approve_stream(
+        self,
+        run_id: str,
+        decision: HumanDecision,
+        on_event: "EventCallback | None" = None,
+    ) -> ChatRunResult:
+        """恢复 waiting_human run，并在运行过程中回调事件。"""
+        return await self._run_with_stream(
+            runner=lambda: self._runtime.resume(
+                run_id=run_id,
+                human_decision={
+                    "approved": decision.approved,
+                    "approved_by": decision.approved_by,
+                    "edited_arguments": decision.edited_arguments,
+                },
+            ),
+            on_event=on_event,
+            run_id=run_id,
+        )
 
     async def chat_with_approvals(
         self,
@@ -147,7 +186,63 @@ class ChatService:
         messages = await self._runtime.session_store.load_messages(session_id)
         return [{"role": m.role, "content": m.content, "created_at": m.created_at} for m in messages]
 
+    async def _run_with_stream(
+        self,
+        runner: Callable[[], Awaitable[AgentState]],
+        on_event: "EventCallback | None" = None,
+        *,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        message: str | None = None,
+    ) -> ChatRunResult:
+        if on_event is None:
+            return _state_to_result(await runner())
+
+        subscriber = _StreamingEventSubscriber(
+            on_event=on_event,
+            run_id=run_id,
+            session_id=session_id,
+            message=message,
+        )
+        self._runtime.event_bus.subscribe(subscriber)
+        try:
+            state = await runner()
+            return _state_to_result(state)
+        finally:
+            self._runtime.event_bus.unsubscribe(subscriber)
+
+
+class _StreamingEventSubscriber:
+    def __init__(
+        self,
+        on_event: "EventCallback",
+        *,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        self._on_event = on_event
+        self._run_id = run_id
+        self._session_id = session_id
+        self._message = message
+
+    async def handle(self, event: AgentEvent) -> None:
+        if self._run_id is None:
+            if event.event_type != EventType.RUN_STARTED:
+                return
+            if self._session_id is not None and event.payload.get("session_id") != self._session_id:
+                return
+            if self._message is not None and event.payload.get("task") != self._message:
+                return
+            self._run_id = event.run_id
+        elif event.run_id != self._run_id:
+            return
+
+        maybe = self._on_event(event)
+        if asyncio.iscoroutine(maybe):
+            await maybe
+
 
 # 类型别名
-from typing import Callable, Awaitable
 ApprovalCallback = Callable[[dict[str, Any]], Awaitable[HumanDecision]]
+EventCallback = Callable[[AgentEvent], Awaitable[None] | None]
