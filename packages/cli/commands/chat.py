@@ -34,7 +34,7 @@ def chat_cmd(
     user_id: UserIdOpt = "demo-user",
     session_id: SessionIdOpt = "demo-session",
     json_output: JsonOpt = False,
-    print_mode: Annotated[bool, typer.Option("--print", "-p", is_flag=True, help="非交互一次性输出")] = False,
+    print_mode: Annotated[bool, typer.Option("--print", "-P", is_flag=True, help="非交互一次性输出")] = False,
 ) -> None:
     """
     发送一条消息并等待结果。
@@ -43,17 +43,55 @@ def chat_cmd(
       agent chat "列出 runtime 目录结构"
       agent chat --session-id my-session "继续上次的任务"
     """
+    root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
+    opts = GlobalOptions(
+        provider=root_opts.provider,
+        user_id=root_opts.user_id,
+        session_id=root_opts.session_id,
+        json_output=root_opts.json_output,
+        verbose=root_opts.verbose,
+    )
+
+    if provider != "openai_compatible":
+        opts.provider = provider
+    if user_id != "demo-user":
+        opts.user_id = user_id
+    if session_id != "demo-session":
+        opts.session_id = session_id
+    if json_output:
+        opts.json_output = True
+
+    if message is None and not print_mode:
+        _run_chat_repl(opts)
+        return
+
     if message is None:
         console.print("[dim]用法: agent chat [OPTIONS] MESSAGE[/]")
         raise typer.Exit(0)
 
-    opts = GlobalOptions(
-        provider=provider,
-        user_id=user_id,
-        session_id=session_id,
-        json_output=json_output,
-    )
     asyncio.run(_do_chat(opts, message))
+
+
+def _run_chat_repl(opts: GlobalOptions) -> None:
+    """chat 子命令下的多轮对话模式。"""
+    console.print("[bold green]Chat Mode[/]  (type [bold]exit[/] to stop)\n")
+    console.print(
+        f"  provider=[cyan]{opts.provider}[/]  user=[cyan]{opts.user_id}[/]  session=[cyan]{opts.session_id}[/]\n"
+    )
+
+    while True:
+        try:
+            raw = console.input("[bold green]you>[/] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]bye[/]")
+            break
+
+        if not raw:
+            continue
+        if raw.lower() in {"exit", "quit"}:
+            console.print("[dim]bye[/]")
+            break
+        asyncio.run(_do_chat(opts, raw))
 
 
 async def _do_chat(opts: GlobalOptions, message: str) -> None:
