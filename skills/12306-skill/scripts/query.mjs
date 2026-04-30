@@ -40,7 +40,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
 });
 
-const [fromName, toName] = positionals;
+const [fromName, toName, positionalDate] = positionals;
 if (!fromName || !toName) {
   console.error(`Usage: query.mjs <from> <to> [options]
 
@@ -59,7 +59,7 @@ Options:
   process.exit(1);
 }
 
-const date = values.date || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+const date = values.date || (/^\d{4}-\d{2}-\d{2}$/.test(positionalDate || '') ? positionalDate : new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }));
 const trainTypeFilter = (values.type || '').toUpperCase();
 
 // --- Time & duration helpers ---

@@ -47,3 +47,13 @@ def test_bash_tool_failure_exposes_error(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert result["error"]
     assert result["error"] != "tool execution failed"
+
+
+def test_powershell_mode_accepts_double_ampersand(tmp_path: Path) -> None:
+    tool = BashTool(BashSessionManager(workspace_root=tmp_path))
+
+    result = asyncio.run(tool.arun({"command": "Write-Output 'one' && Write-Output 'two'"}))
+
+    assert result["ok"] is True
+    assert "one" in result["stdout"]
+    assert "two" in result["stdout"]

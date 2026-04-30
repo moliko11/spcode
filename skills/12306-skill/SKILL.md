@@ -52,6 +52,13 @@ node {baseDir}/scripts/query.mjs 广州 武汉 --json
 - `-o, --output <path>`: Output file path, html mode only (default: `{baseDir}/data/<from>-<to>-<date>.html`)
 - `--json`: Output raw JSON to stdout
 
+### Agent Usage Rules
+
+- For a specific travel date, always use `-d YYYY-MM-DD` or `--date YYYY-MM-DD`.
+- For chat answers, prefer `-f md` or `--json` so the answer can be produced directly from stdout without creating and rereading an HTML file.
+- Do not repeat the same `query.mjs` command after stdout already contains the requested train table or JSON.
+- Resolve relative Chinese dates before running the script: `今天` is the runtime current date, `明天` is current date + 1 day, `昨天` is current date - 1 day.
+
 ### Output Columns
 
 | Column | Meaning |

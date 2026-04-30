@@ -100,6 +100,7 @@ class BashSessionManager:
 
     def _build_command(self, command: str) -> list[str]:
         if self.shell_mode == "powershell":
+            command = re.sub(r"\s&&\s", "; ", command)
             wrapped = (
                 "$ErrorActionPreference='Stop'; "
                 f"{command}; "
