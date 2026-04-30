@@ -79,6 +79,7 @@ class ChatService:
     def from_env(
         cls,
         provider: str | None = None,
+        workspace_root: str | None = None,
         max_tool_calls: int | None = None,
         max_state_tool_calls: int | None = None,
         max_read_tool_calls: int | None = None,
@@ -90,6 +91,7 @@ class ChatService:
         if provider:
             os.environ["MOLIKO_LLM_PROVIDER"] = provider
         runtime = build_runtime(
+            workspace_root=workspace_root,
             max_tool_calls=max_tool_calls,
             max_state_tool_calls=max_state_tool_calls,
             max_read_tool_calls=max_read_tool_calls,

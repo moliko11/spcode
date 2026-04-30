@@ -18,6 +18,7 @@ class GlobalOptions:
     provider: str = "openai_compatible"
     user_id: str = "demo-user"
     session_id: str = "demo-session"
+    workspace: str | None = None
     json_output: bool = False
     verbose: bool = False
     max_tool_calls: int | None = None
@@ -42,6 +43,11 @@ UserIdOpt = Annotated[
 SessionIdOpt = Annotated[
     str,
     typer.Option("--session-id", "-s", help="Session ID", envvar="AGENT_SESSION_ID"),
+]
+
+WorkspaceOpt = Annotated[
+    str | None,
+    typer.Option("--workspace", help="Workspace root for agent IO", envvar="AGENT_WORKSPACE"),
 ]
 
 JsonOpt = Annotated[

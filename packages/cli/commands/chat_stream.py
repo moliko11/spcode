@@ -48,6 +48,7 @@ def chat_stream_cmd(
         provider=root_opts.provider,
         user_id=root_opts.user_id,
         session_id=root_opts.session_id,
+        workspace=root_opts.workspace,
         json_output=root_opts.json_output,
         verbose=root_opts.verbose,
         max_tool_calls=root_opts.max_tool_calls,
@@ -151,6 +152,7 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
 
     svc = ChatService.from_env(
         provider=opts.provider,
+        workspace_root=opts.workspace,
         max_tool_calls=opts.max_tool_calls,
         max_state_tool_calls=opts.max_state_tool_calls,
         max_read_tool_calls=opts.max_read_tool_calls,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -59,7 +60,7 @@ from .config import (
 )
 from .events import AuditSubscriber, EventBus, LoggingSubscriber
 from .executor import ToolExecutor
-from .guardrail import GuardrailEngine, workspace_resolve
+from .guardrail import GuardrailEngine, resolve_workspace_path
 from .llm_client import NativeToolCallingLLMClient
 from .message_builder import MessageBuilder
 from .models import ToolSpec
@@ -111,9 +112,11 @@ class ListDirTool:
     """
     列出目录工具
     """
+    def __init__(self, workspace_root: str | Path = WORKSPACE_DIR) -> None:
+        self.workspace_root = Path(workspace_root).resolve()
+
     async def arun(self, arguments: dict[str, Any]) -> str:
-        root = workspace_resolve(arguments.get("path", "."))
-        workspace_root = WORKSPACE_DIR.resolve()
+        root = resolve_workspace_path(self.workspace_root, str(arguments.get("path", ".")))
         if not root.exists():
             raise FileNotFoundError(f"directory not found: {root.name}")
         if not root.is_dir():
@@ -121,11 +124,12 @@ class ListDirTool:
         entries = []
         for child in sorted(root.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
             kind = "dir" if child.is_dir() else "file"
-            entries.append(f"{kind}\t{child.resolve().relative_to(workspace_root)}")
+            entries.append(f"{kind}\t{child.resolve().relative_to(self.workspace_root)}")
         return "\n".join(entries)
 
 
 def build_runtime(
+    workspace_root: str | Path | None = None,
     max_tool_calls: int | None = None,
     max_state_tool_calls: int | None = None,
     max_read_tool_calls: int | None = None,
@@ -134,6 +138,7 @@ def build_runtime(
     enable_event_logging: bool | None = None,
 ) -> AgentRuntime:
     ensure_dirs()
+    workspace_dir = Path(workspace_root).resolve() if workspace_root is not None else WORKSPACE_DIR.resolve()
     if enable_event_logging is None:
         enable_event_logging = os.getenv("AGENT_EVENT_STDOUT", "0").lower() in {"1", "true", "yes", "on"}
     loader = create_model_loader(
@@ -328,7 +333,7 @@ def build_runtime(
             category="workspace",
             sandbox_required=True,
         ),
-        CoreFileReadTool(workspace_root=WORKSPACE_DIR, extra_roots=SKILL_ROOTS),
+        CoreFileReadTool(workspace_root=workspace_dir, extra_roots=SKILL_ROOTS),
     )
     registry.register(
         ToolSpec(
@@ -352,7 +357,7 @@ def build_runtime(
             max_retries=0,
             approval_policy="always",
         ),
-        CoreFileWriteTool(workspace_root=WORKSPACE_DIR),
+        CoreFileWriteTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -381,7 +386,7 @@ def build_runtime(
             max_retries=0,
             approval_policy="always",
         ),
-        CoreFileEditTool(workspace_root=WORKSPACE_DIR),
+        CoreFileEditTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -397,7 +402,7 @@ def build_runtime(
             category="workspace",
             sandbox_required=True,
         ),
-        ListDirTool(),
+        ListDirTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -418,7 +423,7 @@ def build_runtime(
             category="workspace",
             sandbox_required=True,
         ),
-        CoreGlobTool(workspace_root=WORKSPACE_DIR),
+        CoreGlobTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -441,7 +446,7 @@ def build_runtime(
             category="workspace",
             sandbox_required=True,
         ),
-        CoreGrepTool(workspace_root=WORKSPACE_DIR),
+        CoreGrepTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -509,7 +514,7 @@ def build_runtime(
             category="meta",
             sandbox_required=True,
         ),
-        CoreSkillTool(workspace_root=WORKSPACE_DIR, skill_roots=SKILL_ROOTS),
+        CoreSkillTool(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS),
     )
     registry.register(
         ToolSpec(
@@ -532,7 +537,7 @@ def build_runtime(
             category="integration",
             sandbox_required=True,
         ),
-        CoreMCPTool(workspace_root=WORKSPACE_DIR),
+        CoreMCPTool(workspace_root=workspace_dir),
     )
     registry.register(
         ToolSpec(
@@ -559,14 +564,14 @@ def build_runtime(
             max_retries=0,
             approval_policy="always",
         ),
-        CoreBashTool(session_manager=BashSessionManager(workspace_root=WORKSPACE_DIR)),
+        CoreBashTool(session_manager=BashSessionManager(workspace_root=workspace_dir)),
     )
 
     event_bus = EventBus()
     if enable_event_logging:
         event_bus.subscribe(LoggingSubscriber())
     event_bus.subscribe(AuditSubscriber())
-    guardrail_engine = GuardrailEngine()
+    guardrail_engine = GuardrailEngine(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS)
     idempotency_store = IdempotencyStore()
     tool_executor = ToolExecutor(
         registry=registry,
@@ -578,12 +583,13 @@ def build_runtime(
         event_bus=event_bus,
     )
     # Build a shared SkillTool instance so MessageBuilder can inject skill listings
-    skill_tool_instance = CoreSkillTool(workspace_root=WORKSPACE_DIR, skill_roots=SKILL_ROOTS)
+    skill_tool_instance = CoreSkillTool(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS)
     runtime = AgentRuntime(
         llm_client=NativeToolCallingLLMClient(llm=llm, model_name=active_model_name),
         message_builder=MessageBuilder(
             short_memory_turns=SHORT_MEMORY_TURNS,
             skill_tool=skill_tool_instance,
+            workspace_root=workspace_dir,
         ),
         tool_executor=tool_executor,
         registry=registry,
@@ -604,7 +610,7 @@ def build_runtime(
     )
     runtime.memory_manager = MemoryManager(
         store=FileMemoryStore(MEMORY_USERS_DIR),
-        workspace_id=str(WORKSPACE_DIR.resolve()),
+        workspace_id=str(workspace_dir),
     )
     runtime.compaction_pipeline = CompactionPipeline(
         summarizer=TranscriptSummarizer(llm=llm),

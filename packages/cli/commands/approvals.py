@@ -16,7 +16,7 @@ from typing import Annotated, Optional
 
 import typer
 
-from packages.cli.options import JsonOpt, ProviderOpt, UserIdOpt
+from packages.cli.options import GlobalOptions, JsonOpt, ProviderOpt, UserIdOpt
 from packages.cli.render import (
     console,
     print_error,
@@ -53,6 +53,7 @@ def list_approvals_cmd(
 
 @app.command("approve")
 def approve_cmd(
+    ctx: typer.Context,
     plan_run_id: Annotated[str, typer.Argument(help="plan_run_id")],
     args: Annotated[Optional[str], typer.Option("--args", help="编辑后的 JSON 参数（覆盖原始参数）")] = None,
     provider: ProviderOpt = "openai_compatible",
@@ -66,7 +67,8 @@ def approve_cmd(
       agent approve plan-run-abc123
       agent approve plan-run-abc123 --args '{"path": "new_file.py", "content": "..."}'
     """
-    asyncio.run(_approve(plan_run_id, args, provider, user_id, json_output))
+    root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
+    asyncio.run(_approve(plan_run_id, args, provider, user_id, root_opts.workspace, json_output))
 
 
 async def _approve(
@@ -74,6 +76,7 @@ async def _approve(
     args: str | None,
     provider: str,
     user_id: str,
+    workspace_root: str | None,
     json_output: bool,
 ) -> None:
     import os
@@ -90,7 +93,7 @@ async def _approve(
             print_error(f"--args JSON 解析失败: {e}")
             raise typer.Exit(1)
 
-    svc = OrchestrateService.from_env(provider=provider, user_id=user_id)
+    svc = OrchestrateService.from_env(provider=provider, user_id=user_id, workspace_root=workspace_root)
 
     # 先显示待审批内容
     qs_mod = __import__("packages.app_service.query_service", fromlist=["QueryService"])
@@ -142,23 +145,25 @@ async def _approve(
 
 @app.command("reject")
 def reject_cmd(
+    ctx: typer.Context,
     plan_run_id: Annotated[str, typer.Argument(help="plan_run_id")],
     reason: Annotated[str, typer.Option("--reason", help="拒绝原因")] = "rejected by user",
     provider: ProviderOpt = "openai_compatible",
     user_id: UserIdOpt = "demo-user",
 ) -> None:
     """拒绝一个 waiting_human plan run。"""
-    asyncio.run(_reject(plan_run_id, reason, provider, user_id))
+    root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
+    asyncio.run(_reject(plan_run_id, reason, provider, user_id, root_opts.workspace))
 
 
-async def _reject(plan_run_id: str, reason: str, provider: str, user_id: str) -> None:
+async def _reject(plan_run_id: str, reason: str, provider: str, user_id: str, workspace_root: str | None) -> None:
     import os
     from packages.app_service.orchestrate_service import OrchestrateService
 
     if provider:
         os.environ["MOLIKO_LLM_PROVIDER"] = provider
 
-    svc = OrchestrateService.from_env(provider=provider, user_id=user_id)
+    svc = OrchestrateService.from_env(provider=provider, user_id=user_id, workspace_root=workspace_root)
     with console.status("[bold red]Rejecting...[/]"):
         summary = await svc.approve(
             plan_run_id=plan_run_id,
@@ -169,23 +174,25 @@ async def _reject(plan_run_id: str, reason: str, provider: str, user_id: str) ->
 
 @app.command("recover")
 def recover_cmd(
+    ctx: typer.Context,
     plan_run_id: Annotated[str, typer.Argument(help="plan_run_id")],
     provider: ProviderOpt = "openai_compatible",
     user_id: UserIdOpt = "demo-user",
     json_output: JsonOpt = False,
 ) -> None:
     """从失败状态恢复一个 plan run（重试失败步骤）。"""
-    asyncio.run(_recover(plan_run_id, provider, user_id, json_output))
+    root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
+    asyncio.run(_recover(plan_run_id, provider, user_id, root_opts.workspace, json_output))
 
 
-async def _recover(plan_run_id: str, provider: str, user_id: str, json_output: bool) -> None:
+async def _recover(plan_run_id: str, provider: str, user_id: str, workspace_root: str | None, json_output: bool) -> None:
     import os
     from packages.app_service.orchestrate_service import OrchestrateService
 
     if provider:
         os.environ["MOLIKO_LLM_PROVIDER"] = provider
 
-    svc = OrchestrateService.from_env(provider=provider, user_id=user_id)
+    svc = OrchestrateService.from_env(provider=provider, user_id=user_id, workspace_root=workspace_root)
     with console.status("[bold blue]Recovering...[/]"):
         summary = await svc.recover(plan_run_id=plan_run_id)
 

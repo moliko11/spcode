@@ -26,7 +26,7 @@ def test_chat_cmd_enters_repl_when_message_missing(monkeypatch) -> None:
     monkeypatch.setattr(chat, "_run_chat_repl", _fake_repl)
 
     chat.chat_cmd(
-        ctx=_FakeContext(GlobalOptions(provider="mock", user_id="u1", session_id="s1")),
+        ctx=_FakeContext(GlobalOptions(provider="mock", user_id="u1", session_id="s1", workspace="h:/project")),
         message=None,
         provider="openai_compatible",
         user_id="demo-user",
@@ -38,6 +38,7 @@ def test_chat_cmd_enters_repl_when_message_missing(monkeypatch) -> None:
     assert captured["opts"].provider == "mock"
     assert captured["opts"].user_id == "u1"
     assert captured["opts"].session_id == "s1"
+    assert captured["opts"].workspace == "h:/project"
 
 
 def test_chat_cmd_local_options_override_root(monkeypatch) -> None:
@@ -55,7 +56,7 @@ def test_chat_cmd_local_options_override_root(monkeypatch) -> None:
     monkeypatch.setattr(chat.asyncio, "run", _fake_asyncio_run)
 
     chat.chat_cmd(
-        ctx=_FakeContext(GlobalOptions(provider="mock", user_id="u1", session_id="s1")),
+        ctx=_FakeContext(GlobalOptions(provider="mock", user_id="u1", session_id="s1", workspace="h:/project")),
         message="hello",
         provider="openai_compatible",
         user_id="override-user",
@@ -69,5 +70,6 @@ def test_chat_cmd_local_options_override_root(monkeypatch) -> None:
     assert opts.provider == "mock"
     assert opts.user_id == "override-user"
     assert opts.session_id == "override-session"
+    assert opts.workspace == "h:/project"
     assert opts.json_output is True
     assert captured["message"] == "hello"

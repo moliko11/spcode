@@ -48,6 +48,7 @@ def chat_cmd(
         provider=root_opts.provider,
         user_id=root_opts.user_id,
         session_id=root_opts.session_id,
+        workspace=root_opts.workspace,
         json_output=root_opts.json_output,
         verbose=root_opts.verbose,
     )
@@ -102,7 +103,7 @@ async def _do_chat(opts: GlobalOptions, message: str) -> None:
     if opts.provider:
         os.environ["MOLIKO_LLM_PROVIDER"] = opts.provider
 
-    svc = ChatService.from_env(provider=opts.provider)
+    svc = ChatService.from_env(provider=opts.provider, workspace_root=opts.workspace)
 
     with console.status("[bold blue]Thinking...[/]"):
         result = await svc.chat(

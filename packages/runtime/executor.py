@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable
 from .budget import IdempotencyStore, RetryPolicy, diff_workspace, snapshot_workspace
 from .config import WORKSPACE_DIR
 from .events import EventBus
-from .guardrail import GuardrailEngine, truncate_text, workspace_resolve
+from .guardrail import GuardrailEngine, resolve_workspace_path, truncate_text
 from .models import (
     AgentEvent,
     AgentState,
@@ -34,7 +34,7 @@ class ShellExecutor:
     Shell工具执行器
     """
     def __init__(self, workspace_dir: Path = WORKSPACE_DIR) -> None:
-        self.workspace_dir = workspace_dir
+        self.workspace_dir = Path(workspace_dir).resolve()
 
     async def run(
         self,
@@ -46,7 +46,7 @@ class ShellExecutor:
         command = arguments["command"]
         workdir = self._resolve_workdir(spec, arguments.get("workdir", "."))
         self._check_command_allowed(spec, command)
-        before = snapshot_workspace(WORKSPACE_DIR)
+        before = snapshot_workspace(self.workspace_dir)
         env = self._build_env(spec)
         process = await asyncio.create_subprocess_exec(
             *self._build_command(spec.shell_mode, command),
@@ -93,7 +93,7 @@ class ShellExecutor:
 
         stdout = truncate_text(stdout_raw_str, spec.capture_output_limit)
         stderr = truncate_text(stderr_bytes.decode("utf-8", errors="replace"), spec.capture_output_limit)
-        after = snapshot_workspace(WORKSPACE_DIR)
+        after = snapshot_workspace(self.workspace_dir)
         changed_files = diff_workspace(before, after)
         ok = process.returncode == 0
         return ToolResult(
@@ -107,12 +107,12 @@ class ShellExecutor:
             exit_code=process.returncode,
             changed_files=changed_files,
             sandbox_mode=spec.working_dir_mode,
-            metadata={"command": command, "workdir": str(workdir.relative_to(WORKSPACE_DIR))},
+            metadata={"command": command, "workdir": str(workdir.relative_to(self.workspace_dir))},
         )
 
     def _resolve_workdir(self, spec: ShellToolSpec, workdir: str) -> Path:
-        base = WORKSPACE_DIR.resolve()
-        resolved = workspace_resolve(workdir)
+        base = self.workspace_dir
+        resolved = resolve_workspace_path(self.workspace_dir, workdir)
         if spec.working_dir_mode == "workspace_only" and resolved != base and base not in resolved.parents:
             raise GuardrailViolation("shell workdir must stay inside workspace")
         resolved.mkdir(parents=True, exist_ok=True)

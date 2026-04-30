@@ -107,11 +107,12 @@ class OrchestrateService:
         provider: str | None = None,
         user_id: str = "demo-user",
         session_id: str | None = None,
+        workspace_root: str | None = None,
     ) -> "OrchestrateService":
         import os
         if provider:
             os.environ["MOLIKO_LLM_PROVIDER"] = provider
-        runtime = build_runtime()
+        runtime = build_runtime(workspace_root=workspace_root)
         llm = build_llm()
         planner = Planner(llm=llm)
         plan_store = PlanStore(PLANS_DIR)

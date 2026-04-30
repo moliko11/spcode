@@ -6,33 +6,40 @@ from .config import SKILL_ROOTS, WORKSPACE_DIR
 from .models import GuardrailViolation, ToolResult
 
 
+def resolve_workspace_path(workspace_root: str | Path, path_str: str) -> Path:
+    """Resolve a path and ensure it remains inside the configured workspace root."""
+    base = Path(workspace_root).resolve()
+    candidate = Path(path_str)
+    target = candidate.resolve() if candidate.is_absolute() else (base / candidate).resolve()
+    if target != base and base not in target.parents:
+        raise GuardrailViolation(f"path escapes workspace: {path_str}")
+    return target
+
+
+def resolve_read_path(workspace_root: str | Path, path_str: str, skill_roots: list[Path] | None = None) -> Path:
+    """Resolve a read path inside workspace_root or one of the allowed skill roots."""
+    base = Path(workspace_root).resolve()
+    candidate = Path(path_str)
+    target = candidate.resolve() if candidate.is_absolute() else (base / candidate).resolve()
+    allowed_bases = [base] + [Path(root).resolve() for root in (skill_roots or SKILL_ROOTS)]
+    for allowed in allowed_bases:
+        if target == allowed or allowed in target.parents:
+            return target
+    raise GuardrailViolation(f"path escapes workspace: {path_str}")
+
+
 def workspace_resolve(path_str: str) -> Path:
     """
     工作空间解析（写操作用）：仅允许 WORKSPACE_DIR 下的路径
     """
-    base = WORKSPACE_DIR.resolve()
-    target = (WORKSPACE_DIR / path_str).resolve()
-    if target != base and base not in target.parents:
-        raise GuardrailViolation(f"path escapes workspace: {path_str}")
-    return target
+    return resolve_workspace_path(WORKSPACE_DIR, path_str)
 
 
 def read_resolve(path_str: str) -> Path:
     """
     只读路径解析：允许 WORKSPACE_DIR 或任意 SKILL_ROOTS 下的路径
     """
-    # 先尝试绝对路径
-    candidate = Path(path_str)
-    if candidate.is_absolute():
-        target = candidate.resolve()
-    else:
-        target = (WORKSPACE_DIR / path_str).resolve()
-
-    allowed_bases = [WORKSPACE_DIR.resolve()] + [r.resolve() for r in SKILL_ROOTS]
-    for base in allowed_bases:
-        if target == base or base in target.parents:
-            return target
-    raise GuardrailViolation(f"path escapes workspace: {path_str}")
+    return resolve_read_path(WORKSPACE_DIR, path_str, SKILL_ROOTS)
 
 
 def truncate_text(text: str | None, limit: int) -> str | None:
@@ -48,6 +55,10 @@ class GuardrailEngine:
     """
 
     """
+    def __init__(self, workspace_root: str | Path = WORKSPACE_DIR, skill_roots: list[Path] | None = None) -> None:
+        self.workspace_root = Path(workspace_root).resolve()
+        self.skill_roots = [Path(root).resolve() for root in (skill_roots or SKILL_ROOTS)]
+
     def validate_user_input(self, task: str) -> None:
         blocked = ["steal secrets", "delete production database"]
         lower_task = task.lower()
@@ -89,7 +100,7 @@ class GuardrailEngine:
             path = arguments.get("path", ".")
             if not isinstance(path, str):
                 raise GuardrailViolation(f"{tool_name}.path must be a string")
-            workspace_resolve(path)
+            self._resolve_workspace_path(path)
         elif tool_name in {"glob", "grep"}:
             base_path = arguments.get("base_path", ".")
             pattern = arguments.get("pattern")
@@ -97,7 +108,7 @@ class GuardrailEngine:
                 raise GuardrailViolation(f"{tool_name}.base_path must be a string")
             if not isinstance(pattern, str) or not pattern.strip():
                 raise GuardrailViolation(f"{tool_name}.pattern must be a non-empty string")
-            workspace_resolve(base_path)
+            self._resolve_workspace_path(base_path)
         elif tool_name == "bash":
             command = arguments.get("command")
             cwd = arguments.get("cwd", ".")
@@ -105,7 +116,7 @@ class GuardrailEngine:
                 raise GuardrailViolation("bash.command must be a non-empty string")
             if not isinstance(cwd, str):
                 raise GuardrailViolation("bash.cwd must be a string")
-            workspace_resolve(cwd)
+            self._resolve_workspace_path(cwd)
         elif tool_name == "web_search":
             query = arguments.get("query")
             queries = arguments.get("queries")
@@ -161,15 +172,21 @@ class GuardrailEngine:
         path = arguments.get("path")
         if not isinstance(path, str) or not path.strip():
             raise GuardrailViolation(f"{tool_name}.path must be a non-empty string")
-        read_resolve(path)
+        self._resolve_read_path(path)
 
     def _validate_workspace_path(self, tool_name: str, arguments: dict[str, object], require_content: bool) -> None:
         path = arguments.get("path")
         if not isinstance(path, str) or not path.strip():
             raise GuardrailViolation(f"{tool_name}.path must be a non-empty string")
-        workspace_resolve(path)
+        self._resolve_workspace_path(path)
         if require_content and not isinstance(arguments.get("content"), str):
             raise GuardrailViolation(f"{tool_name}.content must be a string")
+
+    def _resolve_workspace_path(self, path_str: str) -> Path:
+        return resolve_workspace_path(self.workspace_root, path_str)
+
+    def _resolve_read_path(self, path_str: str) -> Path:
+        return resolve_read_path(self.workspace_root, path_str, self.skill_roots)
 
     def _validate_task_tool_args(self, tool_name: str, arguments: dict[str, object]) -> None:
         for key in ("plan_id", "plan_run_id", "task_id", "status", "title", "description", "reason"):

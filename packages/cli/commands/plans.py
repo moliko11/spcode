@@ -104,6 +104,7 @@ def show_plan_cmd(
 
 @app.command("run")
 def run_plan_cmd(
+    ctx: typer.Context,
     goal: Annotated[str, typer.Argument(help="目标描述（会生成新计划并立即执行）")],
     context: Annotated[str, typer.Option("--context", help="额外上下文")] = "",
     provider: ProviderOpt = "openai_compatible",
@@ -116,7 +117,8 @@ def run_plan_cmd(
     示例：
       agent plans run "重构 runtime 模块"
     """
-    asyncio.run(_run_plan(goal, context, provider, user_id, json_output))
+    root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
+    asyncio.run(_run_plan(goal, context, provider, user_id, root_opts.workspace, json_output))
 
 
 async def _run_plan(
@@ -124,6 +126,7 @@ async def _run_plan(
     context: str,
     provider: str,
     user_id: str,
+    workspace_root: str | None,
     json_output: bool,
 ) -> None:
     from packages.app_service.orchestrate_service import OrchestrateService
@@ -132,7 +135,7 @@ async def _run_plan(
     if provider:
         os.environ["MOLIKO_LLM_PROVIDER"] = provider
 
-    svc = OrchestrateService.from_env(provider=provider, user_id=user_id)
+    svc = OrchestrateService.from_env(provider=provider, user_id=user_id, workspace_root=workspace_root)
 
     with console.status("[bold blue]Orchestrating...[/]"):
         summary = await svc.run(goal=goal, context=context)

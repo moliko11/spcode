@@ -36,6 +36,7 @@ from .options import (
     SessionIdOpt,
     UserIdOpt,
     VerboseOpt,
+    WorkspaceOpt,
 )
 
 console = Console()
@@ -56,6 +57,7 @@ def main(
     provider: ProviderOpt = "openai_compatible",
     user_id: UserIdOpt = "demo-user",
     session_id: SessionIdOpt = "demo-session",
+    workspace: WorkspaceOpt = None,
     json_output: JsonOpt = False,
     verbose: VerboseOpt = False,
 ) -> None:
@@ -65,6 +67,7 @@ def main(
         provider=provider,
         user_id=user_id,
         session_id=session_id,
+        workspace=workspace or os.getcwd(),
         json_output=json_output,
         verbose=verbose,
     )

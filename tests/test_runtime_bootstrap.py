@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from langchain_core.messages import AIMessage
 
@@ -15,6 +16,17 @@ def test_build_runtime_smoke() -> None:
     assert runtime.registry.get_spec("file_read").name == "file_read"
     assert runtime.session_store is not None
     assert runtime.memory_manager is not None
+
+
+def test_build_runtime_accepts_workspace_override(tmp_path: Path) -> None:
+    runtime = build_runtime(workspace_root=tmp_path)
+
+    file_read = runtime.registry.get_tool("file_read")
+    list_dir = runtime.registry.get_tool("list_dir")
+
+    assert str(file_read.workspace_root) == str(tmp_path.resolve())
+    assert str(list_dir.workspace_root) == str(tmp_path.resolve())
+    assert runtime.guardrail_engine.workspace_root == tmp_path.resolve()
 
 
 def test_session_store_empty_load() -> None:
