@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import time
 import uuid
@@ -16,6 +17,7 @@ from .executor import ToolExecutor
 from .guardrail import GuardrailEngine
 from .llm_client import NativeToolCallingLLMClient
 from .message_builder import MessageBuilder
+from .model_input_audit import ModelInputAuditor
 from .models import (
     AgentEvent,
     AgentState,
@@ -73,6 +75,7 @@ class AgentRuntime:
         self.idempotency_store = idempotency_store
         self.memory_manager = None
         self.compaction_pipeline = CompactionPipeline()
+        self.model_input_auditor = ModelInputAuditor()
         # A6: run_id → asyncio.Event，用于外部主动取消
         self._cancel_events: dict[str, asyncio.Event] = {}
 
@@ -368,9 +371,17 @@ class AgentRuntime:
                     )
                 )
                 model_start = now()
+                tool_schemas = self.registry.openai_tools(self._visible_tool_names(state))
+                await self.model_input_auditor.audit(
+                    run_id=state.run_id,
+                    step=state.step,
+                    model_name=self.llm_client.model_name,
+                    messages=runtime_messages,
+                    tool_schemas=tool_schemas,
+                )
                 response = await self.llm_client.invoke_with_stream(
                     runtime_messages,
-                    tool_schemas=self.registry.openai_tools(self._visible_tool_names(state)),
+                    tool_schemas=tool_schemas,
                     on_token=lambda token: self.event_bus.publish(
                         AgentEvent(
                             run_id=state.run_id,
@@ -474,8 +485,9 @@ class AgentRuntime:
                 # 检测阶段：找出第一个需要审批的 call
                 approval_idx: int | None = None
                 for _i, _rc in enumerate(tool_calls):
-                    _spec = self.registry._specs.get(_rc["name"])
-                    if _spec is not None and getattr(_spec, "approval_policy", "never") == "always":
+                    if self._find_reusable_result(state, _rc) is not None:
+                        continue
+                    if self._tool_call_needs_approval(state, _rc):
                         approval_idx = _i
                         break
 
@@ -513,9 +525,7 @@ class AgentRuntime:
                                 payload={"tool_name": bc.tool_name, "arguments": bc.arguments},
                             ))
                         batch_start = now()
-                        results = await asyncio.gather(*[
-                            self.tool_executor.execute(state, bc) for bc in batch_calls
-                        ])
+                        results = await self._execute_or_reuse_batch(state, batch_calls)
                         record_timing(state.metadata, "tool_batch_ms", elapsed_ms(batch_start), step=state.step, count=len(batch_calls))
                         for bc, br in zip(batch_calls, results):
                             state.tool_results.append(br)
@@ -582,9 +592,7 @@ class AgentRuntime:
                     ))
                 state.status = RunStatus.TOOL_RUNNING
                 batch_start = now()
-                all_results = await asyncio.gather(*[
-                    self.tool_executor.execute(state, ac) for ac in all_calls
-                ])
+                all_results = await self._execute_or_reuse_batch(state, all_calls)
                 record_timing(state.metadata, "tool_batch_ms", elapsed_ms(batch_start), step=state.step, count=len(all_calls))
                 state.status = RunStatus.RUNNING
                 for ac, ar in zip(all_calls, all_results):
@@ -677,6 +685,63 @@ class AgentRuntime:
             state.metadata["loaded_tools"] = list(DEFAULT_LOADED_TOOL_NAMES)
             loaded = state.metadata["loaded_tools"]
         return [str(name) for name in loaded]
+
+    def _tool_call_needs_approval(self, state: AgentState, raw_call: dict[str, Any]) -> bool:
+        spec = self.registry._specs.get(raw_call["name"])
+        if spec is None:
+            return False
+        call = ToolCall(
+            call_id=raw_call["id"],
+            tool_name=raw_call["name"],
+            arguments=raw_call["arguments"],
+            idempotency_key=f"{state.run_id}:{raw_call['name']}:{safe_json_dumps(raw_call['arguments'])}",
+        )
+        return self.tool_executor.approval_controller.needs_approval(spec, call)
+
+    def _find_reusable_result(self, state: AgentState, raw_call: dict[str, Any] | ToolCall) -> ToolResult | None:
+        if isinstance(raw_call, ToolCall):
+            tool_name = raw_call.tool_name
+            arguments = raw_call.arguments
+        else:
+            tool_name = str(raw_call["name"])
+            arguments = raw_call["arguments"]
+        for result in reversed(state.tool_results):
+            if result.tool_name != tool_name:
+                continue
+            if result.metadata.get("arguments") == arguments:
+                return result
+        return None
+
+    async def _execute_or_reuse_batch(self, state: AgentState, calls: list[ToolCall]) -> list[ToolResult]:
+        results: list[ToolResult | None] = [None] * len(calls)
+        pending: list[tuple[int, ToolCall]] = []
+        for idx, call in enumerate(calls):
+            reusable = self._find_reusable_result(state, call)
+            if reusable is None:
+                pending.append((idx, call))
+                continue
+            cached = dataclasses.replace(
+                reusable,
+                call_id=call.call_id,
+                from_cache=True,
+                metadata={**reusable.metadata, "reused_from_call_id": reusable.call_id},
+            )
+            results[idx] = cached
+            await self.event_bus.publish(
+                AgentEvent(
+                    run_id=state.run_id,
+                    event_type=EventType.TOOL_FINISHED,
+                    event_kind=EventKind.tool_cached.value,
+                    ts=time.time(),
+                    step=state.step,
+                    payload={"tool_name": call.tool_name, "from_cache": True},
+                )
+            )
+        if pending:
+            executed = await asyncio.gather(*[self.tool_executor.execute(state, call) for _, call in pending])
+            for (idx, _), result in zip(pending, executed):
+                results[idx] = result
+        return [result for result in results if result is not None]
 
     def _refresh_system_prompt(self, state: AgentState, runtime_messages: list[Any]) -> list[Any]:
         prompt = self.message_builder.build_system_prompt(state)

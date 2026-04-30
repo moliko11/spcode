@@ -22,6 +22,9 @@ SESSION_DIR = RUNTIME_DIR / "sessions"
 CHECKPOINT_DIR = RUNTIME_DIR / "checkpoints"
 WORKSPACE_DIR = Path(os.getenv("AGENT_WORKSPACE", "./runtime_data/workspace"))
 AUDIT_LOG_PATH = RUNTIME_DIR / "audit.log"
+MODEL_INPUT_AUDIT_LOG_PATH = Path(os.getenv("AGENT_MODEL_INPUT_AUDIT_LOG", RUNTIME_DIR / "model_input_audit.jsonl"))
+MODEL_INPUT_AUDIT_ENABLED = os.getenv("AGENT_MODEL_INPUT_AUDIT", "1").lower() in {"1", "true", "yes", "on"}
+MODEL_INPUT_AUDIT_INCLUDE_CONTENT = os.getenv("AGENT_MODEL_INPUT_AUDIT_CONTENT", "1").lower() in {"1", "true", "yes", "on"}
 
 MEMORY_DIR = RUNTIME_DIR / "memory"
 MEMORY_USERS_DIR = MEMORY_DIR / "users"

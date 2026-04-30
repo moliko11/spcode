@@ -23,6 +23,7 @@ from .models import (
     ShellToolSpec,
     ToolCall,
     ToolResult,
+    ToolSpec,
 )
 from .permission import ApprovalController, PermissionController
 from .registry import ToolRegistry
@@ -188,6 +189,7 @@ class ToolExecutor:
 
     async def execute(self, state: AgentState, call: ToolCall) -> ToolResult:
         start = time.time()
+        spec: ToolSpec | None = None
         try:
             spec = self.registry.get_spec(call.tool_name)
             tool = self.registry.get_tool(call.tool_name)
@@ -207,6 +209,9 @@ class ToolExecutor:
                 retry_count=0,
                 approved_by=call.metadata.get("approved_by"),
             )
+            if spec is not None:
+                self._annotate_tool_profile(result, spec)
+            result.metadata.setdefault("arguments", call.arguments)
             await self.event_bus.publish(
                 AgentEvent(
                     run_id=state.run_id,
@@ -267,10 +272,10 @@ class ToolExecutor:
                     )
                 raw = await asyncio.wait_for(
                     tool.arun(call.arguments, on_progress=_on_progress),
-                    timeout=spec.timeout_s,
+                    timeout=self._effective_timeout(spec, call),
                 )
             else:
-                raw = await asyncio.wait_for(tool.arun(call.arguments), timeout=spec.timeout_s)
+                raw = await asyncio.wait_for(tool.arun(call.arguments), timeout=self._effective_timeout(spec, call))
             result = self._normalize_result(call, raw)
             result.approved_by = call.metadata.get("approved_by")
             result.sandbox_mode = result.sandbox_mode or sandbox_mode
@@ -297,6 +302,8 @@ class ToolExecutor:
                 sandbox_mode=sandbox_mode,
             )
 
+        self._annotate_tool_profile(result, spec)
+        result.metadata.setdefault("arguments", call.arguments)
         self._cache_result(spec, call, result)
         await self.event_bus.publish(
             AgentEvent(
@@ -317,6 +324,28 @@ class ToolExecutor:
             )
         )
         return result
+
+    def _annotate_tool_profile(self, result: ToolResult, spec: ToolSpec) -> None:
+        result.metadata.setdefault("tool_category", spec.category)
+        result.metadata.setdefault("risk_level", spec.risk_level)
+        result.metadata.setdefault("side_effect", spec.side_effect)
+        result.metadata.setdefault("budget_category", self._budget_category(spec))
+
+    def _budget_category(self, spec: ToolSpec) -> str:
+        name = spec.name.lower()
+        if name.startswith("task_"):
+            return "state"
+        if name in {"file_read", "glob", "grep", "list_dir"}:
+            return "read"
+        if spec.category == "web" or spec.side_effect == "network":
+            return "network"
+        return "main"
+
+    def _effective_timeout(self, spec: ToolSpec, call: ToolCall) -> float:
+        requested = call.arguments.get("timeout_s")
+        if isinstance(requested, (int, float)) and requested > 0:
+            return max(float(spec.timeout_s), float(requested))
+        return float(spec.timeout_s)
 
     def _normalize_result(self, call: ToolCall, raw: Any) -> ToolResult:
         if isinstance(raw, ToolResult):
