@@ -20,6 +20,11 @@ class GlobalOptions:
     session_id: str = "demo-session"
     json_output: bool = False
     verbose: bool = False
+    max_tool_calls: int | None = None
+    max_state_tool_calls: int | None = None
+    max_read_tool_calls: int | None = None
+    max_network_tool_calls: int | None = None
+    max_high_risk_tool_calls: int | None = None
 
 
 # ── 常用 Annotated 类型 ───────────────────────────────────────────────────

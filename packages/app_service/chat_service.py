@@ -76,12 +76,26 @@ class ChatService:
     # ── factory ──────────────────────────────────────────────────────────
 
     @classmethod
-    def from_env(cls, provider: str | None = None, max_tool_calls: int | None = None) -> "ChatService":
+    def from_env(
+        cls,
+        provider: str | None = None,
+        max_tool_calls: int | None = None,
+        max_state_tool_calls: int | None = None,
+        max_read_tool_calls: int | None = None,
+        max_network_tool_calls: int | None = None,
+        max_high_risk_tool_calls: int | None = None,
+    ) -> "ChatService":
         """从环境变量构建（与 main.py 的 configure_provider 对齐）。"""
         import os
         if provider:
             os.environ["MOLIKO_LLM_PROVIDER"] = provider
-        runtime = build_runtime(max_tool_calls=max_tool_calls)
+        runtime = build_runtime(
+            max_tool_calls=max_tool_calls,
+            max_state_tool_calls=max_state_tool_calls,
+            max_read_tool_calls=max_read_tool_calls,
+            max_network_tool_calls=max_network_tool_calls,
+            max_high_risk_tool_calls=max_high_risk_tool_calls,
+        )
         return cls(runtime=runtime)
 
     # ── core API ─────────────────────────────────────────────────────────

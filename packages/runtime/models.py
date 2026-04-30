@@ -288,6 +288,7 @@ class ToolSpec:
     readonly: bool = True
     risk_level: str = "low"
     side_effect: str = "none"
+    category: str = "general"
     sandbox_required: bool = False
     network_required: bool = False
     writes_workspace: bool = False

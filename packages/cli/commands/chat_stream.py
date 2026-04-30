@@ -37,6 +37,11 @@ def chat_stream_cmd(
     user_id: UserIdOpt = "demo-user",
     session_id: SessionIdOpt = "demo-session",
     json_output: JsonOpt = False,
+    max_tool_calls: Annotated[Optional[int], typer.Option("--max-tool-calls", help="Max main tool calls; state/read tools use separate budgets.")] = None,
+    max_state_tool_calls: Annotated[Optional[int], typer.Option("--max-state-tool-calls", help="Max workflow state tool calls.")] = None,
+    max_read_tool_calls: Annotated[Optional[int], typer.Option("--max-read-tool-calls", help="Max read-only workspace tool calls.")] = None,
+    max_network_tool_calls: Annotated[Optional[int], typer.Option("--max-network-tool-calls", help="Max network tool calls.")] = None,
+    max_high_risk_tool_calls: Annotated[Optional[int], typer.Option("--max-high-risk-tool-calls", help="Max high-risk tool calls.")] = None,
 ) -> None:
     root_opts = ctx.find_root().obj if isinstance(ctx.find_root().obj, GlobalOptions) else GlobalOptions()
     opts = GlobalOptions(
@@ -45,6 +50,11 @@ def chat_stream_cmd(
         session_id=root_opts.session_id,
         json_output=root_opts.json_output,
         verbose=root_opts.verbose,
+        max_tool_calls=root_opts.max_tool_calls,
+        max_state_tool_calls=root_opts.max_state_tool_calls,
+        max_read_tool_calls=root_opts.max_read_tool_calls,
+        max_network_tool_calls=root_opts.max_network_tool_calls,
+        max_high_risk_tool_calls=root_opts.max_high_risk_tool_calls,
     )
     if provider != "openai_compatible":
         opts.provider = provider
@@ -54,6 +64,16 @@ def chat_stream_cmd(
         opts.session_id = session_id
     if json_output:
         opts.json_output = True
+    if max_tool_calls is not None:
+        opts.max_tool_calls = max_tool_calls
+    if max_state_tool_calls is not None:
+        opts.max_state_tool_calls = max_state_tool_calls
+    if max_read_tool_calls is not None:
+        opts.max_read_tool_calls = max_read_tool_calls
+    if max_network_tool_calls is not None:
+        opts.max_network_tool_calls = max_network_tool_calls
+    if max_high_risk_tool_calls is not None:
+        opts.max_high_risk_tool_calls = max_high_risk_tool_calls
 
     if message is None:
         _run_stream_repl(opts)
@@ -129,7 +149,14 @@ async def _stream_once(opts: GlobalOptions, message: str) -> None:
                 line_open = False
             render_stream_event_view(view)
 
-    svc = ChatService.from_env(provider=opts.provider)
+    svc = ChatService.from_env(
+        provider=opts.provider,
+        max_tool_calls=opts.max_tool_calls,
+        max_state_tool_calls=opts.max_state_tool_calls,
+        max_read_tool_calls=opts.max_read_tool_calls,
+        max_network_tool_calls=opts.max_network_tool_calls,
+        max_high_risk_tool_calls=opts.max_high_risk_tool_calls,
+    )
     result = await svc.chat_stream(
         user_id=opts.user_id,
         session_id=opts.session_id,
