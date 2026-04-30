@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -24,10 +26,12 @@ class MessageBuilder:
         loaded_tools = state.metadata.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES)
         loaded = ", ".join(str(name) for name in loaded_tools)
         dynamic = ", ".join(DYNAMIC_TOOL_NAMES)
+        current_dt = self._current_datetime_text()
         prompt = (
             "You are an agentic coding assistant operating inside a local workspace.\n\n"
             "Current environment:\n"
-            f"- Current date: {CURRENT_DATE}\n"
+            f"- Current date: {current_dt['date']}\n"
+            f"- Current local time: {current_dt['datetime']}\n"
             f"- Timezone: {CURRENT_TIMEZONE}\n"
             f"- Workspace root: {WORKSPACE_DIR.resolve()}\n\n"
             "Identity:\n"
@@ -45,11 +49,12 @@ class MessageBuilder:
             "- Use `file_read` to inspect files.\n"
             "- Use `file_edit` for targeted modifications.\n"
             "- Use `file_write` to create, overwrite, or append files.\n"
-            "- Use `web_search` to discover candidate web sources.\n"
+            "- Use `web_search` to discover candidate web sources. Leave page content disabled unless snippets are insufficient, then fetch only the best source with `web_fetch`.\n"
             "- Use `web_fetch` to inspect specific URLs.\n"
             "- Use `bash` only when specialized tools are insufficient.\n"
+            "- For `bash`, prefer the `cwd` argument over `cd ...` in the command. The shell is PowerShell on Windows; do not use POSIX-only syntax.\n"
             "- Use `tool_search` if the currently loaded toolset appears insufficient.\n"
-            "- Use `task_create`, `task_update`, `task_list`, `task_output`, and `task_stop` to track multi-step workflow progress when a task benefits from explicit task state.\n"
+            "- Use task tools only when the user asks for persisted task tracking or the work truly needs a managed multi-step plan.\n"
             "- Use `skill` to load and invoke a skill when relevant.\n"
             "- Use `mcp` only after discovering a relevant MCP capability.\n\n"
             "Dynamic tools:\n"
@@ -62,6 +67,10 @@ class MessageBuilder:
             "- For multi-step tasks, create or list workflow tasks first, keep task status current, and do not mark a task completed until there is concrete evidence.\n"
             "- For external or time-sensitive facts, prefer web tools first.\n"
             "- If the task is ambiguous, choose the smallest useful next action.\n\n"
+            "Date and tool-call discipline:\n"
+            "- Resolve relative dates from the current local date before calling tools. Chinese date words: today=今天, tomorrow=明天, yesterday=昨天.\n"
+            "- When a tool supports date options, pass dates through the documented date option instead of as extra positional text.\n"
+            "- Avoid repeating the same tool call with the same arguments after a successful observation; use the existing observation to answer or refine with different arguments.\n\n"
             "Response style:\n"
             "- Be concise.\n"
             "- Do not expose hidden chain-of-thought.\n"
@@ -77,6 +86,19 @@ class MessageBuilder:
         if recall_text:
             prompt += "\n" + recall_text + "\n"
         return prompt
+
+    def _current_datetime_text(self) -> dict[str, str]:
+        date_text = CURRENT_DATE or datetime.date.today().isoformat()
+        try:
+            tz = ZoneInfo(CURRENT_TIMEZONE)
+            now = datetime.datetime.now(tz)
+            if CURRENT_DATE:
+                y, m, d = (int(part) for part in CURRENT_DATE.split("-"))
+                now = now.replace(year=y, month=m, day=d)
+            datetime_text = now.strftime("%Y-%m-%d %H:%M:%S %Z")
+        except (ValueError, ZoneInfoNotFoundError):
+            datetime_text = f"{date_text} 00:00:00 {CURRENT_TIMEZONE}"
+        return {"date": date_text, "datetime": datetime_text}
 
     def build_initial_messages(self, state: AgentState) -> list[Any]:
         recent = state.conversation[-self.short_memory_turns :]

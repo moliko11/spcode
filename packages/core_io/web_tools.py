@@ -33,6 +33,8 @@ class WebSearchTool:
         max_results: int = 5,
         request_timeout_s: float = 15.0,
         fetch_concurrency: int = 5,
+        page_content_limit: int = 1200,
+        max_pages_to_fetch: int = 2,
     ) -> None:
         load_env_file()
         self.tavily_api_key = tavily_api_key or os.getenv("TAVIL_API_KEY") or os.getenv("TAVILY_API_KEY")
@@ -40,11 +42,13 @@ class WebSearchTool:
         self.max_results = max_results
         self.request_timeout_s = request_timeout_s
         self.fetch_concurrency = fetch_concurrency
+        self.page_content_limit = page_content_limit
+        self.max_pages_to_fetch = max_pages_to_fetch
 
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
         queries = self._normalize_queries(arguments)
         include_snippets = bool(arguments.get("include_snippets", True))
-        include_page_content = bool(arguments.get("include_page_content", True))
+        include_page_content = bool(arguments.get("include_page_content", False))
 
         async with httpx.AsyncClient(timeout=self.request_timeout_s, follow_redirects=True) as client:
             search_results = await asyncio.gather(
@@ -59,7 +63,7 @@ class WebSearchTool:
                 for idx, result in enumerate(search_results):
                     query_pages: list[dict[str, Any]] = []
                     pages_by_query.append(query_pages)
-                    for item in result["results"][: self.max_results]:
+                    for item in result["results"][: self.max_pages_to_fetch]:
                         task_mapping.append((idx, item))
                         fetch_tasks.append(self._fetch_page(sem, client, item["url"]))
                 fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
@@ -79,7 +83,7 @@ class WebSearchTool:
                 if include_snippets:
                     entry["snippet"] = item.get("snippet", "")
                 matched_page = next((page for page in pages if page["url"] == item["url"]), None)
-                if matched_page:
+                if matched_page and not matched_page.get("error"):
                     entry["page_content"] = matched_page.get("content", "")
                 entries.append(entry)
             aggregated.append(
@@ -200,7 +204,7 @@ class WebSearchTool:
             response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
             text = self._strip_html(response.text)
-            return {"url": url, "content": text[:4000]}
+            return {"url": url, "content": text[: self.page_content_limit]}
 
     def _strip_html(self, html: str) -> str:
         text = html

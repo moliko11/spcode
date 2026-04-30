@@ -58,15 +58,10 @@ DEFAULT_LOADED_TOOL_NAMES = [
     "web_fetch",
     "bash",
     "tool_search",
-    "task_create",
-    "task_update",
-    "task_list",
-    "task_output",
-    "task_stop",
     "skill",
 ]
 
-DYNAMIC_TOOL_NAMES = ["mcp"]
+DYNAMIC_TOOL_NAMES = ["task_create", "task_update", "task_list", "task_output", "task_stop", "mcp"]
 
 TOOL_CATALOG = [
     {"name": "get_current_time", "description": "Read the current local time in the runtime environment.", "category": "utility", "tags": ["time", "clock", "date"], "default_loaded": True, "requires_approval": False},
@@ -81,11 +76,11 @@ TOOL_CATALOG = [
     {"name": "web_fetch", "description": "Fetch and inspect specific URLs.", "category": "web", "tags": ["web", "fetch", "url", "page"], "default_loaded": True, "requires_approval": False},
     {"name": "bash", "description": "Run shell commands in the workspace when specialized tools are insufficient.", "category": "execution", "tags": ["bash", "shell", "command", "terminal"], "default_loaded": True, "requires_approval": True},
     {"name": "tool_search", "description": "Discover available tools and recommend which ones to load next.", "category": "meta", "tags": ["tools", "discover", "catalog", "load"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_create", "description": "Create persisted workflow tasks inside plans.", "category": "workflow", "tags": ["task", "workflow", "plan", "create"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_update", "description": "Update persisted workflow task status, output, evidence, and metadata.", "category": "workflow", "tags": ["task", "workflow", "status", "update"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_list", "description": "List persisted workflow tasks from recent plans, a specific plan, or a plan run.", "category": "workflow", "tags": ["task", "workflow", "list", "progress"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_output", "description": "Read workflow task, plan, or plan run output.", "category": "workflow", "tags": ["task", "workflow", "output", "evidence"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_stop", "description": "Stop a task, plan, or plan run.", "category": "workflow", "tags": ["task", "workflow", "stop", "cancel"], "default_loaded": True, "requires_approval": False},
+    {"name": "task_create", "description": "Create persisted workflow tasks inside plans.", "category": "workflow", "tags": ["task", "workflow", "plan", "create"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_update", "description": "Update persisted workflow task status, output, evidence, and metadata.", "category": "workflow", "tags": ["task", "workflow", "status", "update"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_list", "description": "List persisted workflow tasks from recent plans, a specific plan, or a plan run.", "category": "workflow", "tags": ["task", "workflow", "list", "progress"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_output", "description": "Read workflow task, plan, or plan run output.", "category": "workflow", "tags": ["task", "workflow", "output", "evidence"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_stop", "description": "Stop a task, plan, or plan run.", "category": "workflow", "tags": ["task", "workflow", "stop", "cancel"], "default_loaded": False, "requires_approval": False},
     {"name": "skill", "description": "Discover, inspect, and read local skills.", "category": "meta", "tags": ["skill", "workflow", "prompt", "local"], "default_loaded": False, "requires_approval": False},
     {"name": "mcp", "description": "Inspect locally configured MCP servers, resources, prompts, and tools.", "category": "integration", "tags": ["mcp", "server", "resource", "integration"], "default_loaded": False, "requires_approval": False},
 ]

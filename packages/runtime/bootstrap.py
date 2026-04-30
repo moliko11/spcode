@@ -431,7 +431,7 @@ def build_runtime(
                     "query": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "include_snippets": {"type": "boolean", "default": True},
-                    "include_page_content": {"type": "boolean", "default": True},
+                    "include_page_content": {"type": "boolean", "default": False},
                 },
             },
             risk_level="medium",

@@ -63,11 +63,20 @@ def test_web_search_prefers_tavily_and_fetches_pages(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
     tool = WebSearchTool(tavily_api_key="tvly", serp_api_key="serp")
 
-    result = asyncio.run(tool.arun({"query": "agent tools"}))
+    result = asyncio.run(tool.arun({"query": "agent tools", "include_page_content": True}))
 
     assert result["metadata"]["providers_used"] == ["tavily"]
     assert result["results"][0]["results"][0]["title"] == "T1"
     assert "page one" in result["results"][0]["results"][0]["page_content"]
+
+
+def test_web_search_does_not_fetch_pages_by_default(monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    tool = WebSearchTool(tavily_api_key="tvly", serp_api_key="serp")
+
+    result = asyncio.run(tool.arun({"query": "agent tools"}))
+
+    assert "page_content" not in result["results"][0]["results"][0]
 
 
 def test_web_search_falls_back_to_serpapi(monkeypatch):
