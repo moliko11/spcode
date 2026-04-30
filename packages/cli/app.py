@@ -41,6 +41,14 @@ from .options import (
 
 console = Console()
 
+
+def _configure_utf8_stdio() -> None:
+    """Prefer UTF-8 for redirected CLI logs on Windows."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
 # ── 根 app ────────────────────────────────────────────────────────────────
 app = typer.Typer(
     name="agent",
@@ -62,6 +70,7 @@ def main(
     verbose: VerboseOpt = False,
 ) -> None:
     """Personal Code Agent — 不带子命令时进入交互 REPL。"""
+    _configure_utf8_stdio()
     ctx.ensure_object(dict)
     ctx.obj = GlobalOptions(
         provider=provider,

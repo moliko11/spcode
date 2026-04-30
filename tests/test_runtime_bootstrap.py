@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage
 
 from packages.runtime.agent_loop import AgentRuntime
 from packages.runtime.bootstrap import build_runtime
-from packages.runtime.models import serialize_message
+from packages.runtime.models import AgentState, serialize_message
 
 
 def test_build_runtime_smoke() -> None:
@@ -23,10 +23,24 @@ def test_build_runtime_accepts_workspace_override(tmp_path: Path) -> None:
 
     file_read = runtime.registry.get_tool("file_read")
     list_dir = runtime.registry.get_tool("list_dir")
+    bash = runtime.registry.get_tool("bash")
 
     assert str(file_read.workspace_root) == str(tmp_path.resolve())
     assert str(list_dir.workspace_root) == str(tmp_path.resolve())
+    assert str(bash.session_manager.workspace_root) == str(tmp_path.resolve())
     assert runtime.guardrail_engine.workspace_root == tmp_path.resolve()
+    assert runtime.memory_manager.workspace_id == str(tmp_path.resolve())
+
+
+def test_build_runtime_injects_workspace_override_into_system_prompt(tmp_path: Path) -> None:
+    runtime = build_runtime(workspace_root=tmp_path)
+    state = AgentState(run_id="r1", user_id="u1", session_id="s1", task="hello")
+
+    prompt = runtime.message_builder.build_system_prompt(state)
+
+    assert f"- Workspace root: {tmp_path.resolve()}" in prompt
+    assert "runtime_data\\workspace" not in prompt
+    assert "runtime_data/workspace" not in prompt
 
 
 def test_session_store_empty_load() -> None:

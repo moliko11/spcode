@@ -49,7 +49,7 @@ def test_approval_skips_trusted_12306_cd_then_node() -> None:
     assert controller.needs_approval(spec, call) is False
 
 
-def test_approval_keeps_general_bash_under_human_review() -> None:
+def test_approval_skips_simple_readonly_powershell() -> None:
     controller = ApprovalController()
     spec = ToolSpec(
         name="bash",
@@ -63,6 +63,46 @@ def test_approval_keeps_general_bash_under_human_review() -> None:
         call_id="c1",
         tool_name="bash",
         arguments={"command": "Get-ChildItem"},
+        idempotency_key="k1",
+    )
+
+    assert controller.needs_approval(spec, call) is False
+
+
+def test_approval_skips_version_checks() -> None:
+    controller = ApprovalController()
+    spec = ToolSpec(
+        name="bash",
+        description="shell",
+        parameters={},
+        approval_policy="always",
+        risk_level="high",
+        side_effect="shell",
+    )
+    call = ToolCall(
+        call_id="c1",
+        tool_name="bash",
+        arguments={"command": "node --version; npm --version"},
+        idempotency_key="k1",
+    )
+
+    assert controller.needs_approval(spec, call) is False
+
+
+def test_approval_keeps_install_under_human_review() -> None:
+    controller = ApprovalController()
+    spec = ToolSpec(
+        name="bash",
+        description="shell",
+        parameters={},
+        approval_policy="always",
+        risk_level="high",
+        side_effect="shell",
+    )
+    call = ToolCall(
+        call_id="c1",
+        tool_name="bash",
+        arguments={"command": "npm install"},
         idempotency_key="k1",
     )
 

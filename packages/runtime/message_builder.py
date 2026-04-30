@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,9 +19,11 @@ class MessageBuilder:
         self,
         short_memory_turns: int = SHORT_MEMORY_TURNS,
         skill_tool: "SkillTool | None" = None,
+        workspace_root: str | Path | None = None,
     ) -> None:
         self.short_memory_turns = short_memory_turns
         self.skill_tool = skill_tool
+        self.workspace_root = Path(workspace_root).resolve() if workspace_root is not None else WORKSPACE_DIR.resolve()
 
     def build_system_prompt(self, state: AgentState) -> str:
         loaded_tools = state.metadata.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES)
@@ -33,7 +36,7 @@ class MessageBuilder:
             f"- Current date: {current_dt['date']}\n"
             f"- Current local time: {current_dt['datetime']}\n"
             f"- Timezone: {CURRENT_TIMEZONE}\n"
-            f"- Workspace root: {WORKSPACE_DIR.resolve()}\n\n"
+            f"- Workspace root: {self.workspace_root}\n\n"
             "Identity:\n"
             "- You can inspect files, search code, modify files, fetch web content, search the web, inspect skills, inspect MCP configuration, and run shell commands when needed.\n"
             "- You are precise, tool-aware, and action-oriented.\n\n"

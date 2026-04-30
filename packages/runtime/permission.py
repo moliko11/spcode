@@ -42,16 +42,46 @@ class ApprovalController:
         command = str(call.arguments.get("command", "")).strip()
         if not command:
             return False
-        # Keep this narrow: trusted local 12306 scripts only. A single leading
-        # cd into the skill directory is allowed because models often emit it.
         if re.search(r"[|><`\r\n]", command):
             return False
         if re.search(r"(^|\s)(-o|--output)(\s|=)", command):
             return False
+        if self._is_simple_readonly_shell(command):
+            return True
+        # Keep this narrow: trusted local 12306 scripts only. A single leading
+        # cd into the skill directory is allowed because models often emit it.
         normalized = command.replace("\\", "/")
         direct = r'^node\s+"?[A-Za-z]:?/?.*?/skills/12306-skill/scripts/(stations|query)\.mjs"?(\s|$)'
         cd_then_node = r'^cd\s+"?[A-Za-z]:?/?.*?/skills/12306-skill"?\s*(;|&&)\s*node\s+scripts/(stations|query)\.mjs(\s|$)'
         return bool(re.match(direct, normalized) or re.match(cd_then_node, normalized))
+
+    def _is_simple_readonly_shell(self, command: str) -> bool:
+        readonly_commands = {
+            "dir",
+            "echo",
+            "get-childitem",
+            "get-command",
+            "get-content",
+            "get-item",
+            "get-location",
+            "get-process",
+            "node",
+            "npm",
+            "pwd",
+            "select-string",
+            "test-path",
+            "where.exe",
+        }
+        for segment in re.split(r"\s*(?:;|&&)\s*", command):
+            segment = segment.strip()
+            if not segment:
+                continue
+            first = segment.split(maxsplit=1)[0].lower()
+            if first not in readonly_commands:
+                return False
+            if first in {"node", "npm"} and not re.match(r"^(node|npm)\s+(-v|--version|version)\s*$", segment, flags=re.IGNORECASE):
+                return False
+        return True
 
     async def require_approval_if_needed(self, spec: ToolSpec, call: ToolCall) -> None:
         if not self.needs_approval(spec, call):

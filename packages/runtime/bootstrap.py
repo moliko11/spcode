@@ -542,7 +542,7 @@ def build_runtime(
     registry.register(
         ToolSpec(
             name="bash",
-            description="Run a bash or PowerShell command in a persistent workspace session.",
+            description="Run a PowerShell command in a persistent workspace session.",
             parameters={
                 "type": "object",
                 "properties": {
