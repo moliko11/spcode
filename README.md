@@ -219,6 +219,8 @@ user message
 - `bash`
 - `tool_search`
 - `todo_write`
+- `enter_plan_mode`
+- `exit_plan_mode`
 - `get_current_time`
 - `calculator`
 
@@ -237,6 +239,7 @@ user message
 - 工作区路径必须限制在 `AGENT_WORKSPACE` 内。
 - 写操作必须通过审批策略。
 - bash 默认高风险，必须审批。
+- plan mode 开启后，executor 会阻断写文件、bash、网络等副作用工具，只允许继续规划、读取上下文或退出 plan mode。
 - 工具参数进入 guardrail 校验。
 - 运行过程写入 audit log。
 - budget controller 限制无限循环和过度工具调用。

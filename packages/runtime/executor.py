@@ -194,6 +194,7 @@ class ToolExecutor:
             spec = self.registry.get_spec(call.tool_name)
             tool = self.registry.get_tool(call.tool_name)
             self.guardrail_engine.validate_tool_args(call.tool_name, call.arguments)
+            self._check_plan_mode_boundary(state, spec)
             self.permission_controller.check_tool_permission(state, spec)
             await self.approval_controller.require_approval_if_needed(spec, call)
         except HumanInterventionRequired:
@@ -289,6 +290,7 @@ class ToolExecutor:
             result = await self.retry_policy.run(_invoke_once, retryable=_retryable, max_retries=spec.max_retries)
             result.latency_ms = int((time.time() - start) * 1000)
             result.retry_count = self.retry_policy.last_retry_count
+            self._update_plan_mode_state(state, call, result)
         except Exception as exc:
             result = ToolResult(
                 call_id=call.call_id,
@@ -325,6 +327,26 @@ class ToolExecutor:
         )
         return result
 
+    def _check_plan_mode_boundary(self, state: AgentState, spec: ToolSpec) -> None:
+        plan_mode = state.metadata.get("plan_mode")
+        if not isinstance(plan_mode, dict) or not plan_mode.get("active"):
+            return
+        if spec.name in {"exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop", "tool_search", "file_read", "glob", "grep", "list_dir", "calculator", "get_current_time", "skill", "mcp"}:
+            return
+        if spec.writes_workspace or spec.side_effect in {"local_fs", "shell", "network"} or spec.risk_level in {"medium", "high", "critical"}:
+            raise GuardrailViolation(f"plan mode blocks side-effect tool: {spec.name}")
+
+    def _update_plan_mode_state(self, state: AgentState, call: ToolCall, result: ToolResult) -> None:
+        if not result.ok or call.tool_name not in {"enter_plan_mode", "exit_plan_mode"}:
+            return
+        try:
+            payload = json.loads(result.output or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        plan_mode = payload.get("plan_mode")
+        if isinstance(plan_mode, dict):
+            state.metadata["plan_mode"] = plan_mode
+
     def _annotate_tool_profile(self, result: ToolResult, spec: ToolSpec) -> None:
         result.metadata.setdefault("tool_category", spec.category)
         result.metadata.setdefault("risk_level", spec.risk_level)
@@ -333,7 +355,7 @@ class ToolExecutor:
 
     def _budget_category(self, spec: ToolSpec) -> str:
         name = spec.name.lower()
-        if name.startswith("task_"):
+        if name.startswith("task_") or name in {"todo_write", "enter_plan_mode", "exit_plan_mode"}:
             return "state"
         if name in {"file_read", "glob", "grep", "list_dir"}:
             return "read"

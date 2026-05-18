@@ -53,6 +53,8 @@ CURRENT_TIMEZONE = os.getenv("CURRENT_TIMEZONE", "Asia/Shanghai")
 DEFAULT_LOADED_TOOL_NAMES = [
     "get_current_time",
     "calculator",
+    "enter_plan_mode",
+    "exit_plan_mode",
     "file_read",
     "file_write",
     "file_edit",
@@ -72,6 +74,8 @@ DYNAMIC_TOOL_NAMES = ["task_create", "task_update", "task_list", "task_output", 
 TOOL_CATALOG = [
     {"name": "get_current_time", "description": "Read the current local time in the runtime environment.", "category": "utility", "tags": ["time", "clock", "date"], "default_loaded": True, "requires_approval": False},
     {"name": "calculator", "description": "Evaluate small arithmetic expressions.", "category": "utility", "tags": ["math", "calculate", "expression"], "default_loaded": True, "requires_approval": False},
+    {"name": "enter_plan_mode", "description": "Enter side-effect-free plan mode for analysis and planning.", "category": "workflow", "tags": ["plan", "mode", "workflow", "safety"], "default_loaded": True, "requires_approval": False},
+    {"name": "exit_plan_mode", "description": "Exit plan mode with an approved, rejected, or revise_required decision.", "category": "workflow", "tags": ["plan", "mode", "workflow", "approval"], "default_loaded": True, "requires_approval": False},
     {"name": "file_read", "description": "Read files or line ranges from the local workspace.", "category": "workspace", "tags": ["file", "read", "workspace", "inspect"], "default_loaded": True, "requires_approval": False},
     {"name": "file_write", "description": "Create, overwrite, or append files in the local workspace.", "category": "workspace", "tags": ["file", "write", "create", "append"], "default_loaded": True, "requires_approval": True},
     {"name": "file_edit", "description": "Apply precise edits to existing workspace files.", "category": "workspace", "tags": ["file", "edit", "replace", "insert"], "default_loaded": True, "requires_approval": True},

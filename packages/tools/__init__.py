@@ -1,4 +1,6 @@
 from .BashTool import BashSessionManager, BashTool
+from .EnterPlanModeTool import EnterPlanModeTool
+from .ExitPlanModeTool import ExitPlanModeTool
 from .FileEditTool import FileEditTool
 from .FileReadTool import FileReadTool
 from .FileWriteTool import FileWriteTool
@@ -19,6 +21,8 @@ from .WebSearchTool import WebSearchTool
 __all__ = [
     "BashSessionManager",
     "BashTool",
+    "EnterPlanModeTool",
+    "ExitPlanModeTool",
     "FileReadTool",
     "FileWriteTool",
     "FileEditTool",

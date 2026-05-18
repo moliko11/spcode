@@ -12,6 +12,8 @@ from packages.model_loader import create_model_loader
 from packages.tools import (
     BashSessionManager,
     BashTool as CoreBashTool,
+    EnterPlanModeTool as CoreEnterPlanModeTool,
+    ExitPlanModeTool as CoreExitPlanModeTool,
     FileEditTool as CoreFileEditTool,
     FileReadTool as CoreFileReadTool,
     FileWriteTool as CoreFileWriteTool,
@@ -174,6 +176,46 @@ def build_runtime(
             category="utility",
         ),
         CalculatorTool(),
+    )
+    registry.register(
+        ToolSpec(
+            name="enter_plan_mode",
+            description="Enter a side-effect-free planning mode. While active, write, shell, network, and external side-effect tools are blocked.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "constraints": {"type": "array", "items": {"type": "string"}},
+                    "plan_mode_session_id": {"type": "string"},
+                },
+                "required": ["goal", "reason"],
+            },
+            side_effect="none",
+            category="workflow",
+            cache_policy="none",
+        ),
+        CoreEnterPlanModeTool(),
+    )
+    registry.register(
+        ToolSpec(
+            name="exit_plan_mode",
+            description="Exit planning mode with a decision: approved, rejected, or revise_required.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan_mode_session_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "decision": {"type": "string", "enum": ["approved", "rejected", "revise_required"]},
+                    "notes": {"type": "string"},
+                },
+                "required": ["decision"],
+            },
+            side_effect="none",
+            category="workflow",
+            cache_policy="none",
+        ),
+        CoreExitPlanModeTool(),
     )
     registry.register(
         ToolSpec(

@@ -154,7 +154,7 @@ class GuardrailEngine:
             action = arguments.get("action")
             if action is not None and not isinstance(action, str):
                 raise GuardrailViolation(f"{tool_name}.action must be a string")
-        elif tool_name in {"todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop"}:
+        elif tool_name in {"enter_plan_mode", "exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop"}:
             self._validate_task_tool_args(tool_name, arguments)
 
     def validate_tool_result(self, result: ToolResult) -> None:
@@ -201,6 +201,18 @@ class GuardrailEngine:
             title = arguments.get("title")
             if not isinstance(title, str) or not title.strip():
                 raise GuardrailViolation("task_create.title must be a non-empty string")
+        if tool_name == "enter_plan_mode":
+            for key in ("goal", "reason"):
+                value = arguments.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise GuardrailViolation(f"enter_plan_mode.{key} must be a non-empty string")
+            constraints = arguments.get("constraints")
+            if constraints is not None and not isinstance(constraints, list):
+                raise GuardrailViolation("enter_plan_mode.constraints must be a list")
+        if tool_name == "exit_plan_mode":
+            decision = arguments.get("decision")
+            if decision not in {"approved", "rejected", "revise_required"}:
+                raise GuardrailViolation("exit_plan_mode.decision must be approved, rejected, or revise_required")
         if tool_name == "todo_write":
             todos = arguments.get("todos")
             if not isinstance(todos, list):
