@@ -42,6 +42,13 @@ from .options import (
 console = Console()
 
 
+def _split_repl_command(raw: str) -> tuple[str, str]:
+    """把 /command arg 拆成命令和参数，便于测试和复用。"""
+    text = raw[1:] if raw.startswith("/") else raw
+    cmd, _, arg = text.strip().partition(" ")
+    return cmd.lower(), arg.strip()
+
+
 def _configure_utf8_stdio() -> None:
     """Prefer UTF-8 for redirected CLI logs on Windows."""
     for stream in (sys.stdout, sys.stderr):
@@ -92,19 +99,18 @@ def main(
 
 def _run_repl(opts: GlobalOptions) -> None:
     """
-    简易交互 REPL（占位）。
-    后续用 Textual TUI 替换，目前保持 chat 体验可用。
-    """
-    from .commands.chat import _do_chat
+    终端工作台 REPL。
 
-    console.print("[bold green]Agent REPL[/]  (type [bold]/help[/] for commands, [bold]Ctrl+D[/] to exit)\n")
-    console.print(
-        f"  provider=[cyan]{opts.provider}[/]  user=[cyan]{opts.user_id}[/]  session=[cyan]{opts.session_id}[/]\n"
-    )
+    默认输入走流式 chat；斜杠命令提供计划、执行、审批和查询入口。
+    """
+    from .commands.chat_stream import _stream_once
+    from .render import render_workbench_home
+
+    render_workbench_home(opts, _snapshot_workbench())
 
     while True:
         try:
-            raw = console.input("[bold green]>[/] ").strip()
+            raw = console.input("[bold green]agent>[/] ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/]")
             break
@@ -117,30 +123,20 @@ def _run_repl(opts: GlobalOptions) -> None:
             _handle_slash(raw, opts)
             continue
 
-        # 普通消息 → chat
-        asyncio.run(_do_chat(opts, raw))
+        # 普通消息 → 流式 chat
+        asyncio.run(_stream_once(opts, raw))
 
 
 def _handle_slash(raw: str, opts: GlobalOptions) -> None:
-    """处理 REPL 内斜杠命令（简化版，后续扩展）。"""
-    parts = raw[1:].split(maxsplit=1)
-    cmd = parts[0].lower()
-    arg = parts[1] if len(parts) > 1 else ""
+    """处理 REPL 内斜杠命令。"""
+    cmd, arg = _split_repl_command(raw)
 
     if cmd in ("exit", "quit", "q"):
         console.print("[dim]bye[/]")
         raise SystemExit(0)
     elif cmd == "help":
-        console.print(
-            "  /clear     — 清除会话历史\n"
-            "  /cost      — 显示 token 统计\n"
-            "  /memory    — 查看记忆\n"
-            "  /model <p> — 切换 provider\n"
-            "  /plan      — 进入计划模式\n"
-            "  /runs      — 列出最近 run\n"
-            "  /status    — 当前状态\n"
-            "  /quit      — 退出\n"
-        )
+        from .render import render_workbench_help
+        render_workbench_help()
     elif cmd == "clear":
         import uuid
         opts.session_id = f"session-{uuid.uuid4().hex[:8]}"
@@ -157,13 +153,67 @@ def _handle_slash(raw: str, opts: GlobalOptions) -> None:
     elif cmd in ("memory", "mem"):
         from .commands.memory import _list_memories
         asyncio.run(_list_memories(opts))
+    elif cmd == "plans":
+        from packages.app_service.query_service import QueryService
+        from .render import render_plans_table
+        render_plans_table(QueryService.from_env().list_plans(limit=20))
     elif cmd == "runs":
         from .commands.runs import _list_runs
         _list_runs(opts)
+    elif cmd in ("approvals", "approval"):
+        from packages.app_service.query_service import QueryService
+        from .render import render_plan_runs_table
+        waiting = QueryService.from_env().list_plan_runs(status_filter="waiting_human", limit=50)
+        render_plan_runs_table(waiting)
+    elif cmd in ("plan", "p"):
+        if not arg:
+            console.print("[dim]用法: /plan <goal>[/]")
+            return
+        from .commands.plans import _create_plan
+        asyncio.run(_create_plan(arg, "", opts.provider, opts.json_output))
+    elif cmd in ("run", "orchestrate"):
+        if not arg:
+            console.print("[dim]用法: /run <goal>[/]")
+            return
+        from .commands.plans import _run_plan
+        asyncio.run(_run_plan(arg, "", opts.provider, opts.user_id, opts.workspace, opts.json_output))
+    elif cmd == "approve":
+        if not arg:
+            console.print("[dim]用法: /approve <plan_run_id>[/]")
+            return
+        from .commands.approvals import _approve
+        asyncio.run(_approve(arg, None, opts.provider, opts.user_id, opts.workspace, opts.json_output))
+    elif cmd == "reject":
+        if not arg:
+            console.print("[dim]用法: /reject <plan_run_id>[/]")
+            return
+        from .commands.approvals import _reject
+        asyncio.run(_reject(arg, "rejected from workbench", opts.provider, opts.user_id, opts.workspace))
+    elif cmd == "recover":
+        if not arg:
+            console.print("[dim]用法: /recover <plan_run_id>[/]")
+            return
+        from .commands.approvals import _recover
+        asyncio.run(_recover(arg, opts.provider, opts.user_id, opts.workspace, opts.json_output))
     elif cmd == "status":
-        console.print(f"  provider=[cyan]{opts.provider}[/]  user=[cyan]{opts.user_id}[/]  session=[cyan]{opts.session_id}[/]")
+        from .render import render_workbench_status
+        render_workbench_status(opts, _snapshot_workbench())
     else:
         console.print(f"[dim]未知命令 /{cmd}，输入 /help 查看可用命令[/]")
+
+
+def _snapshot_workbench() -> dict[str, int]:
+    """读取工作台概览；失败时返回空计数，避免 REPL 启动被查询错误打断。"""
+    try:
+        from packages.app_service.query_service import QueryService
+        qs = QueryService.from_env()
+        return {
+            "plans": len(qs.list_plans(limit=200)),
+            "runs": len(qs.list_plan_runs(limit=200)),
+            "waiting": len(qs.list_plan_runs(status_filter="waiting_human", limit=200)),
+        }
+    except Exception:
+        return {}
 
 
 # ── 子命令注册 ─────────────────────────────────────────────────────────────

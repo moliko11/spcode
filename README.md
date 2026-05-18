@@ -253,6 +253,7 @@ uv run python -m pytest tests/test_core_file_tools.py tests/test_core_search_too
 
 近期重点：
 
+- 完善 CLI UI 工作台体验，提供类似 Claude Code / Codex 的流式对话、计划、运行、审批和状态入口。
 - 修复持久化 ID 的路径安全问题。
 - 让 runtime 失败状态统一落盘，避免异常后 checkpoint 停在 running。
 - 隔离并行 orchestrator 中的 per-run 状态。

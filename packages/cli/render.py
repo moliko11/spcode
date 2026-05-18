@@ -155,6 +155,51 @@ def print_info(msg: str) -> None:
     console.print(f"[dim]{msg}[/]")
 
 
+# ── workbench ─────────────────────────────────────────────────────────────
+
+def render_workbench_home(opts: Any, snapshot: dict[str, Any] | None = None) -> None:
+    """渲染默认 CLI 工作台首页。"""
+    snapshot = snapshot or {}
+    t = Table.grid(padding=(0, 2))
+    t.add_column(style="bold cyan", no_wrap=True)
+    t.add_column(style="white")
+    t.add_row("provider", str(getattr(opts, "provider", "")))
+    t.add_row("user", str(getattr(opts, "user_id", "")))
+    t.add_row("session", str(getattr(opts, "session_id", "")))
+    t.add_row("workspace", str(getattr(opts, "workspace", "") or "current directory"))
+    if snapshot:
+        t.add_row("plans", str(snapshot.get("plans", 0)))
+        t.add_row("runs", str(snapshot.get("runs", 0)))
+        t.add_row("waiting", str(snapshot.get("waiting", 0)))
+    console.print(Panel(t, title="[bold]Agent Workbench[/]", border_style="cyan"))
+    console.print("[dim]输入消息直接聊天；输入 /help 查看计划、运行和审批命令。[/]\n")
+
+
+def render_workbench_help() -> None:
+    """渲染 REPL 内命令面板。"""
+    t = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    t.add_column("command", no_wrap=True, style="cyan")
+    t.add_column("action")
+    t.add_row("/plan <goal>", "生成计划但不执行")
+    t.add_row("/run <goal>", "生成计划并执行，遇到审批时交互处理")
+    t.add_row("/plans", "列出最近计划")
+    t.add_row("/runs", "列出最近 plan run")
+    t.add_row("/approvals", "列出等待审批的 plan run")
+    t.add_row("/approve <id>", "审批并恢复等待中的 plan run")
+    t.add_row("/reject <id>", "拒绝等待中的 plan run")
+    t.add_row("/recover <id>", "恢复未完成的 plan run")
+    t.add_row("/model <provider>", "切换 provider")
+    t.add_row("/clear", "开启一个新 session")
+    t.add_row("/status", "显示当前工作台状态")
+    t.add_row("/quit", "退出")
+    console.print(Panel(t, title="[bold]Workbench Commands[/]", border_style="blue"))
+
+
+def render_workbench_status(opts: Any, snapshot: dict[str, Any] | None = None) -> None:
+    """渲染当前 CLI 状态。"""
+    render_workbench_home(opts, snapshot=snapshot)
+
+
 # ── run / chat ────────────────────────────────────────────────────────────
 
 def build_stream_event_view(event: Any) -> StreamEventView:
