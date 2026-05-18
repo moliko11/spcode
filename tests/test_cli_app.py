@@ -51,3 +51,40 @@ def test_snapshot_workbench_tolerates_query_errors(monkeypatch) -> None:
     monkeypatch.setattr(query_service.QueryService, "from_env", _raise_from_env)
 
     assert cli_app._snapshot_workbench() == {}
+
+
+def test_parse_history_limit_defaults_and_bounds() -> None:
+    assert cli_app._parse_history_limit("") == 30
+    assert cli_app._parse_history_limit("abc") == 30
+    assert cli_app._parse_history_limit("0") == 1
+    assert cli_app._parse_history_limit("5") == 5
+
+
+def test_show_history_loads_current_session(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeQueryService:
+        async def get_session_messages(self, session_id: str):
+            captured["session_id"] = session_id
+            return [{"role": "user", "content": "hello", "created_at": 1.0}]
+
+    def _fake_from_env():
+        return _FakeQueryService()
+
+    def _fake_render(session_id: str, messages: list[dict], *, limit: int | None = None) -> None:
+        captured["render_session_id"] = session_id
+        captured["messages"] = messages
+        captured["limit"] = limit
+
+    import packages.app_service.query_service as query_service
+    import packages.cli.render as render
+
+    monkeypatch.setattr(query_service.QueryService, "from_env", _fake_from_env)
+    monkeypatch.setattr(render, "render_session_history", _fake_render)
+
+    cli_app._show_history(GlobalOptions(session_id="s-history"), "7")
+
+    assert captured["session_id"] == "s-history"
+    assert captured["render_session_id"] == "s-history"
+    assert captured["messages"] == [{"role": "user", "content": "hello", "created_at": 1.0}]
+    assert captured["limit"] == 7

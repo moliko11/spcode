@@ -38,6 +38,7 @@ from .options import (
     VerboseOpt,
     WorkspaceOpt,
 )
+from .repl_input import create_prompt_session, read_repl_input
 
 console = Console()
 
@@ -107,10 +108,11 @@ def _run_repl(opts: GlobalOptions) -> None:
     from .render import render_workbench_home
 
     render_workbench_home(opts, _snapshot_workbench())
+    prompt_session = create_prompt_session()
 
     while True:
         try:
-            raw = console.input("[bold green]agent>[/] ").strip()
+            raw = read_repl_input(console, prompt_session).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/]")
             break
@@ -150,6 +152,8 @@ def _handle_slash(raw: str, opts: GlobalOptions) -> None:
             console.print(f"[dim]当前 provider={opts.provider}[/]")
     elif cmd == "cost":
         console.print("[dim]/cost 需要运行中的 run，请先发送一条消息[/]")
+    elif cmd in ("history", "hist"):
+        _show_history(opts, arg)
     elif cmd in ("memory", "mem"):
         from .commands.memory import _list_memories
         asyncio.run(_list_memories(opts))
@@ -200,6 +204,25 @@ def _handle_slash(raw: str, opts: GlobalOptions) -> None:
         render_workbench_status(opts, _snapshot_workbench())
     else:
         console.print(f"[dim]未知命令 /{cmd}，输入 /help 查看可用命令[/]")
+
+
+def _parse_history_limit(arg: str, default: int = 30) -> int:
+    if not arg:
+        return default
+    try:
+        value = int(arg.strip())
+    except ValueError:
+        return default
+    return max(1, value)
+
+
+def _show_history(opts: GlobalOptions, arg: str = "") -> None:
+    from packages.app_service.query_service import QueryService
+    from .render import render_session_history
+
+    limit = _parse_history_limit(arg)
+    messages = asyncio.run(QueryService.from_env().get_session_messages(opts.session_id))
+    render_session_history(opts.session_id, messages, limit=limit)
 
 
 def _snapshot_workbench() -> dict[str, int]:

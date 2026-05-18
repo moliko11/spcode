@@ -140,7 +140,7 @@ class AgentRuntime:
         run_start = now()
         self.guardrail_engine.validate_user_input(message)
         session_start = now()
-        previous = await self.session_store.load_messages(session_id)
+        previous = await self._load_closed_session_messages(session_id)
         await self.session_store.append_message(session_id, "user", message)
         session_io_ms = elapsed_ms(session_start)
         recall_text: str | None = None
@@ -201,6 +201,7 @@ class AgentRuntime:
         except RunCancelled:
             state.status = RunStatus.CANCELLED
             state.phase = Phase.COMPLETED
+            state.final_output = self._cancelled_output("cancelled")
             state.updated_at = time.time()
             await self.event_bus.publish(
                 AgentEvent(
@@ -212,6 +213,7 @@ class AgentRuntime:
                     payload={"reason": "cancelled"},
                 )
             )
+            await self._append_assistant_safely(state, state.final_output, stage="session_append_cancelled")
             await self._save_checkpoint(state)
             return state
         except Exception as exc:
@@ -300,6 +302,7 @@ class AgentRuntime:
         except RunCancelled:
             state.status = RunStatus.CANCELLED
             state.phase = Phase.COMPLETED
+            state.final_output = self._cancelled_output("cancelled by approval rejection")
             state.updated_at = time.time()
             await self.event_bus.publish(
                 AgentEvent(
@@ -311,6 +314,7 @@ class AgentRuntime:
                     payload={"reason": "cancelled by approval rejection"},
                 )
             )
+            await self._append_assistant_safely(state, state.final_output, stage="session_append_cancelled")
             await self._save_checkpoint(state)
             return state
         except Exception as exc:
@@ -793,6 +797,28 @@ class AgentRuntime:
         if decision.plan_mode is not None:
             state.metadata["plan_mode"] = decision.plan_mode
 
+    async def _load_closed_session_messages(self, session_id: str) -> list[SessionMessage]:
+        messages = await self.session_store.load_messages(session_id)
+        if not messages or messages[-1].role != "user":
+            return messages
+        closure = "上一条请求在生成 assistant 回复前中断；本轮将作为新的独立请求开始。"
+        await self.session_store.append_message(session_id, "assistant", closure)
+        return await self.session_store.load_messages(session_id)
+
+    def _cancelled_output(self, reason: str) -> str:
+        return f"执行已取消：{reason}。下一条用户消息会作为新的独立请求开始。"
+
+    def _failed_output(self, reason: str) -> str:
+        return f"执行失败：{reason}。下一条用户消息会作为新的独立请求开始。"
+
+    async def _append_assistant_safely(self, state: AgentState, content: str, *, stage: str) -> None:
+        try:
+            await self.session_store.append_message(state.session_id, "assistant", content)
+        except Exception as exc:
+            state.metadata.setdefault("errors", []).append(
+                {"type": type(exc).__name__, "message": str(exc), "stage": stage}
+            )
+
     async def _save_checkpoint(self, state: AgentState) -> None:
         self.checkpoint_store.save(state)
         await self.event_bus.publish(AgentEvent(run_id=state.run_id, event_type=EventType.CHECKPOINT_SAVED, ts=time.time(), step=state.step))
@@ -809,12 +835,7 @@ class AgentRuntime:
                 payload={"final_output": state.final_output},
             )
         )
-        try:
-            await self.session_store.append_message(state.session_id, "assistant", state.final_output or "")
-        except Exception as exc:
-            state.metadata.setdefault("errors", []).append(
-                {"type": type(exc).__name__, "message": str(exc), "stage": "session_append_assistant"}
-            )
+        await self._append_assistant_safely(state, state.final_output or "", stage="session_append_assistant")
         if self.memory_manager is not None:
             memory_start = now()
             try:
@@ -870,6 +891,7 @@ class AgentRuntime:
     async def _mark_failed(self, state: AgentState, exc: Exception, run_start: float) -> None:
         state.status = RunStatus.FAILED
         state.failure_reason = f"unhandled error: {exc}"
+        state.final_output = self._failed_output(state.failure_reason)
         state.phase = Phase.COMPLETED
         state.updated_at = time.time()
         state.metadata.setdefault("errors", []).append(
@@ -888,6 +910,7 @@ class AgentRuntime:
             event_type=EventType.RUN_COMPLETED,
             ts=time.time(),
             step=state.step,
-            payload={"final_output": None, "failure_reason": state.failure_reason},
+            payload={"final_output": state.final_output, "failure_reason": state.failure_reason},
         ))
+        await self._append_assistant_safely(state, state.final_output, stage="session_append_failed")
         await self._save_checkpoint(state)

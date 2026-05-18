@@ -7,6 +7,7 @@ render.py — Rich 渲染工具集
 from __future__ import annotations
 
 import json
+import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -177,22 +178,43 @@ def render_workbench_home(opts: Any, snapshot: dict[str, Any] | None = None) -> 
 
 def render_workbench_help() -> None:
     """渲染 REPL 内命令面板。"""
+    from .repl_input import slash_command_help_rows
+
     t = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     t.add_column("command", no_wrap=True, style="cyan")
     t.add_column("action")
-    t.add_row("/plan <goal>", "生成计划但不执行")
-    t.add_row("/run <goal>", "生成计划并执行，遇到审批时交互处理")
-    t.add_row("/plans", "列出最近计划")
-    t.add_row("/runs", "列出最近 plan run")
-    t.add_row("/approvals", "列出等待审批的 plan run")
-    t.add_row("/approve <id>", "审批并恢复等待中的 plan run")
-    t.add_row("/reject <id>", "拒绝等待中的 plan run")
-    t.add_row("/recover <id>", "恢复未完成的 plan run")
-    t.add_row("/model <provider>", "切换 provider")
-    t.add_row("/clear", "开启一个新 session")
-    t.add_row("/status", "显示当前工作台状态")
-    t.add_row("/quit", "退出")
+    for usage, description in slash_command_help_rows():
+        t.add_row(usage, description)
     console.print(Panel(t, title="[bold]Workbench Commands[/]", border_style="blue"))
+
+
+def render_session_history(session_id: str, messages: list[dict[str, Any]], *, limit: int | None = None) -> None:
+    """渲染当前会话历史。"""
+    visible = messages[-limit:] if limit and limit > 0 else messages
+    if not visible:
+        console.print(Panel("[dim]当前 session 还没有历史消息[/]", title=f"[bold]History · {session_id}[/]", border_style="blue"))
+        return
+
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold")
+    table.add_column("#", justify="right", no_wrap=True, style="dim")
+    table.add_column("time", no_wrap=True, style="dim")
+    table.add_column("role", no_wrap=True, style="cyan")
+    table.add_column("content")
+    offset = len(messages) - len(visible)
+    for index, message in enumerate(visible, start=offset + 1):
+        created_at = message.get("created_at")
+        if isinstance(created_at, (int, float)):
+            timestamp = datetime.datetime.fromtimestamp(created_at).strftime("%m-%d %H:%M")
+        else:
+            timestamp = ""
+        content = str(message.get("content") or "").strip().replace("\r\n", "\n")
+        if len(content) > 600:
+            content = content[:600].rstrip() + "\n...[truncated]"
+        table.add_row(str(index), timestamp, str(message.get("role") or ""), content)
+    title = f"[bold]History · {session_id}[/]"
+    if limit and limit > 0 and len(messages) > limit:
+        title += f" [dim](last {limit}/{len(messages)})[/]"
+    console.print(Panel(table, title=title, border_style="blue"))
 
 
 def render_workbench_status(opts: Any, snapshot: dict[str, Any] | None = None) -> None:

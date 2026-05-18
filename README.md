@@ -87,6 +87,14 @@ uv sync
 uv run python main.py chat --provider mock "hello"
 ```
 
+进入 CLI 工作台：
+
+```powershell
+uv run agent
+```
+
+工作台普通输入会走流式 chat；输入 `/` 会显示 slash 命令补全菜单，可继续输入字符过滤并用方向键选择。常用命令包括 `/history [limit]` 查看当前 session 历史、`/clear` 开启新 session、`/status` 查看状态、`/plan` 和 `/run` 管理计划执行。
+
 生成计划但不执行：
 
 ```powershell
@@ -146,7 +154,8 @@ uv run python main.py show-memory --user-id demo-user
 
 ```text
 user message
-  -> recall memory
+     -> close any dangling previous user turn
+     -> recall memory
      -> apply autonomy policy
   -> build system prompt
      -> model decides direct answer / todo / plan mode / tool execution
@@ -159,6 +168,8 @@ user message
 ```
 
 普通 `chat` 会先按输入和近期会话判断本轮模式：简单问题直接答；复杂行动请求会倾向先用 `todo_write` 暴露执行计划；只规划请求会进入 plan mode 并阻断副作用工具；用户批准上一轮计划后会按对话中的计划继续执行。对于托管 workflow 任务，可用 `task_verify` 记录验收/测试证据，用 `task_replan` 对失败任务局部追加或替换后续任务。
+
+为避免旧任务污染新输入，runtime 在每轮 chat 开始前会检查当前 session 是否以未回复的 user 消息结尾；如果存在，会先写入一条 assistant 终止消息来闭合上一轮。正常完成、失败和取消路径也都会落盘 assistant 消息，让后续请求总是从清晰的 turn 边界开始。
 
 ### Plan
 

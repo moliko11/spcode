@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from packages.cli.render import StreamToolCallAggregator, build_stream_event_view
+from packages.cli.render import StreamToolCallAggregator, build_stream_event_view, render_session_history
+from packages.cli.repl_input import iter_slash_command_names, slash_command_help_rows
 from packages.runtime.models import AgentEvent, EventKind, EventType
 
 
@@ -98,3 +99,26 @@ def test_tool_call_aggregator_keeps_parallel_indexes_separate() -> None:
     assert len(views) == 2
     assert any("bash[0] command=a" in view.text for view in views)
     assert any("bash[1] command=b" in view.text for view in views)
+
+
+def test_slash_command_metadata_includes_history() -> None:
+    assert "/history" in iter_slash_command_names()
+    assert "/hist" in iter_slash_command_names()
+    assert any(usage == "/history [limit]" for usage, _ in slash_command_help_rows())
+
+
+def test_render_session_history_outputs_messages(capsys) -> None:
+    render_session_history(
+        "s1",
+        [
+            {"role": "user", "content": "hello", "created_at": 1.0},
+            {"role": "assistant", "content": "hi", "created_at": 2.0},
+        ],
+        limit=1,
+    )
+
+    output = capsys.readouterr().out
+    assert "History" in output
+    assert "s1" in output
+    assert "assistant" in output
+    assert "hi" in output

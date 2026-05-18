@@ -15,6 +15,7 @@ dependencies = [
     # CLI
     "typer>=0.12,<1",
     "rich>=13,<15",
+    "prompt-toolkit>=3.0,<4",
     # API server
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
