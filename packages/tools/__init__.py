@@ -11,8 +11,10 @@ from .SkillTool import SkillTool
 from .TaskCreateTool import TaskCreateTool
 from .TaskListTool import TaskListTool
 from .TaskOutputTool import TaskOutputTool
+from .TaskReplanTool import TaskReplanTool
 from .TaskStopTool import TaskStopTool
 from .TaskUpdateTool import TaskUpdateTool
+from .TaskVerifyTool import TaskVerifyTool
 from .TodoWriteTool import TodoWriteTool
 from .ToolSearchTool import ToolSearchTool
 from .WebFetchTool import WebFetchTool
@@ -33,7 +35,9 @@ __all__ = [
     "TaskUpdateTool",
     "TaskListTool",
     "TaskOutputTool",
+    "TaskReplanTool",
     "TaskStopTool",
+    "TaskVerifyTool",
     "TodoWriteTool",
     "MCPTool",
     "ToolSearchTool",

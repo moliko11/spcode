@@ -11,8 +11,10 @@ from packages.tools import (
     TaskCreateTool,
     TaskListTool,
     TaskOutputTool,
+    TaskReplanTool,
     TaskStopTool,
     TaskUpdateTool,
+    TaskVerifyTool,
     TodoWriteTool,
 )
 from packages.runtime.guardrail import GuardrailEngine, GuardrailViolation
@@ -225,3 +227,88 @@ def test_guardrail_validates_task_tool_args() -> None:
         assert "status" in str(exc)
     else:
         raise AssertionError("expected invalid todo status to fail")
+
+
+def test_task_verify_and_replan_tools(tmp_path: Path) -> None:
+    plan_store, plan_run_store, workflow_store = _stores(tmp_path)
+    create = TaskCreateTool(plan_store=plan_store, plan_run_store=plan_run_store, workflow_store=workflow_store)
+    verify = TaskVerifyTool(
+        plan_store=plan_store,
+        plan_run_store=plan_run_store,
+        workflow_store=workflow_store,
+        workspace_root=tmp_path,
+    )
+    replan = TaskReplanTool(plan_store=plan_store, plan_run_store=plan_run_store, workflow_store=workflow_store)
+
+    created = asyncio.run(
+        create.arun(
+            {
+                "task_id": "verify-task",
+                "title": "Verify task",
+                "acceptance_criteria": ["expected phrase"],
+            }
+        )
+    )
+    workflow_id = created["workflow_id"]
+
+    failed = asyncio.run(
+        verify.arun(
+            {
+                "workflow_id": workflow_id,
+                "task_id": "verify-task",
+                "result_summary": "missing",
+            }
+        )
+    )
+    assert failed["ok"] is False
+    assert failed["verification"]["failed"] == ["expected phrase"]
+
+    replanned = asyncio.run(
+        replan.arun(
+            {
+                "workflow_id": workflow_id,
+                "failed_task_id": "verify-task",
+                "strategy": "append",
+                "reason": "criterion missing",
+                "new_tasks": [{"task_id": "fix-verify", "title": "Fix verification"}],
+            }
+        )
+    )
+    assert replanned["replan"]["added_task_ids"] == ["fix-verify"]
+
+    workflow = workflow_store.load(workflow_id)
+    assert workflow is not None
+    assert workflow.tasks[0].status == WorkflowTaskStatus.FAILED
+    assert workflow.tasks[1].dependencies == ["verify-task"]
+
+    passed = asyncio.run(
+        verify.arun(
+            {
+                "workflow_id": workflow_id,
+                "task_id": "fix-verify",
+                "result_summary": "expected phrase",
+            }
+        )
+    )
+    assert passed["ok"] is True
+
+
+def test_guardrail_validates_verify_and_replan_args() -> None:
+    guardrail = GuardrailEngine()
+
+    guardrail.validate_tool_args("task_verify", {"task_id": "t1", "timeout_s": 1})
+    guardrail.validate_tool_args("task_replan", {"workflow_id": "w1", "failed_task_id": "t1", "new_tasks": [{"title": "Retry"}]})
+
+    try:
+        guardrail.validate_tool_args("task_verify", {"task_id": ""})
+    except GuardrailViolation as exc:
+        assert "task_id" in str(exc)
+    else:
+        raise AssertionError("expected invalid task_verify args to fail")
+
+    try:
+        guardrail.validate_tool_args("task_replan", {"workflow_id": "w1", "new_tasks": []})
+    except GuardrailViolation as exc:
+        assert "new_tasks" in str(exc)
+    else:
+        raise AssertionError("expected invalid task_replan args to fail")

@@ -9,8 +9,10 @@ from packages.orchestrator.store import PlanRunStore
 from packages.planner.store import PlanStore
 from packages.runtime.config import PLAN_RUNS_DIR, PLANS_DIR, WORKFLOWS_DIR
 from packages.workflow.models import WorkflowRun, WorkflowStatus, WorkflowTask, WorkflowTaskStatus
+from packages.workflow.replanner import Replanner
 from packages.workflow.service import WorkflowService
 from packages.workflow.store import WorkflowStore
+from packages.workflow.verifier import Verifier
 
 
 def _step_run_status(status: WorkflowTaskStatus) -> StepRunStatus:
@@ -287,6 +289,77 @@ class TaskStopTool(_TaskToolBase):
             "tool_name": "task_stop",
             "stopped": stopped,
             "reason": reason,
+            "changed_files": [],
+        }
+
+
+class TaskVerifyTool(_TaskToolBase):
+    def __init__(self, *args: Any, workspace_root: Path | str = ".", **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.verifier = Verifier(workspace_root=workspace_root)
+
+    async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_workflow_argument(arguments)
+        task_id = str(arguments.get("task_id") or "").strip()
+        if not task_id:
+            raise ValueError("task_id is required")
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
+        workflow, task = self.workflow_service.task_output(task_id, workflow_id=workflow_id)
+        result = self.verifier.verify_task(
+            task,
+            result_summary=str(arguments.get("result_summary") or task.result_summary or ""),
+            test_command=str(arguments.get("test_command") or "").strip() or None,
+            timeout_s=int(arguments.get("timeout_s") or 60),
+        )
+        if result.evidence:
+            task.evidence = [*task.evidence, *result.evidence]
+        task.metadata["last_verification"] = result.to_dict()
+        if result.ok and task.status not in {WorkflowTaskStatus.COMPLETED, WorkflowTaskStatus.SKIPPED, WorkflowTaskStatus.CANCELLED}:
+            task.status = WorkflowTaskStatus.COMPLETED
+        elif not result.ok and task.status not in {WorkflowTaskStatus.COMPLETED, WorkflowTaskStatus.SKIPPED, WorkflowTaskStatus.CANCELLED}:
+            task.status = WorkflowTaskStatus.FAILED
+            task.error = "; ".join(result.failed)
+        workflow.updated_at = time.time()
+        task.updated_at = time.time()
+        self.workflow_service._refresh_workflow_status(workflow)
+        self.workflow_store.save(workflow)
+        return {
+            "ok": result.ok,
+            "tool_name": "task_verify",
+            "workflow_id": workflow.workflow_id,
+            "plan_id": workflow.workflow_id,
+            "task_id": task.task_id,
+            "verification": result.to_dict(),
+            "changed_files": [],
+            "metadata": {"failed": result.failed, "passed": result.passed},
+        }
+
+
+class TaskReplanTool(_TaskToolBase):
+    async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_workflow_argument(arguments)
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
+        failed_task_id = str(arguments.get("failed_task_id") or arguments.get("task_id") or "").strip()
+        if not workflow_id:
+            raise ValueError("workflow_id is required")
+        if not failed_task_id:
+            raise ValueError("failed_task_id is required")
+        new_tasks = arguments.get("new_tasks")
+        if not isinstance(new_tasks, list):
+            raise ValueError("new_tasks must be a list")
+        result = Replanner(self.workflow_service).replan_failed_task(
+            workflow_id=workflow_id,
+            failed_task_id=failed_task_id,
+            new_tasks=[item for item in new_tasks if isinstance(item, dict)],
+            strategy=str(arguments.get("strategy") or "append"),
+            reason=str(arguments.get("reason") or ""),
+        )
+        return {
+            "ok": True,
+            "tool_name": "task_replan",
+            "workflow_id": result.workflow_id,
+            "plan_id": result.workflow_id,
+            "replan": result.to_dict(),
             "changed_files": [],
         }
 

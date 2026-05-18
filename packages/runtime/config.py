@@ -69,7 +69,7 @@ DEFAULT_LOADED_TOOL_NAMES = [
     "skill",
 ]
 
-DYNAMIC_TOOL_NAMES = ["task_create", "task_update", "task_list", "task_output", "task_stop", "mcp"]
+DYNAMIC_TOOL_NAMES = ["task_create", "task_update", "task_list", "task_output", "task_verify", "task_replan", "task_stop", "mcp"]
 
 TOOL_CATALOG = [
     {"name": "get_current_time", "description": "Read the current local time in the runtime environment.", "category": "utility", "tags": ["time", "clock", "date"], "default_loaded": True, "requires_approval": False},
@@ -91,6 +91,8 @@ TOOL_CATALOG = [
     {"name": "task_update", "description": "Update persisted workflow task status, output, evidence, and metadata.", "category": "workflow", "tags": ["task", "workflow", "status", "update"], "default_loaded": False, "requires_approval": False},
     {"name": "task_list", "description": "List persisted workflow tasks from recent plans, a specific plan, or a plan run.", "category": "workflow", "tags": ["task", "workflow", "list", "progress"], "default_loaded": False, "requires_approval": False},
     {"name": "task_output", "description": "Read workflow task, plan, or plan run output.", "category": "workflow", "tags": ["task", "workflow", "output", "evidence"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_verify", "description": "Verify a workflow task using acceptance criteria and optional test-command evidence.", "category": "workflow", "tags": ["task", "workflow", "verify", "test", "evidence"], "default_loaded": False, "requires_approval": False},
+    {"name": "task_replan", "description": "Append or replace follow-up workflow tasks after a failed task.", "category": "workflow", "tags": ["task", "workflow", "replan", "failure", "retry"], "default_loaded": False, "requires_approval": False},
     {"name": "task_stop", "description": "Stop a task, plan, or plan run.", "category": "workflow", "tags": ["task", "workflow", "stop", "cancel"], "default_loaded": False, "requires_approval": False},
     {"name": "skill", "description": "Discover, inspect, and read local skills.", "category": "meta", "tags": ["skill", "workflow", "prompt", "local"], "default_loaded": False, "requires_approval": False},
     {"name": "mcp", "description": "Inspect locally configured MCP servers, resources, prompts, and tools.", "category": "integration", "tags": ["mcp", "server", "resource", "integration"], "default_loaded": False, "requires_approval": False},

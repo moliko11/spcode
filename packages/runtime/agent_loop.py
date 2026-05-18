@@ -9,6 +9,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
+from .autonomy import AutonomyPolicy
 from .budget import BudgetController, IdempotencyStore
 from .config import DEFAULT_LOADED_TOOL_NAMES
 from .cost import CostTracker, TokenUsage
@@ -76,6 +77,7 @@ class AgentRuntime:
         self.memory_manager = None
         self.compaction_pipeline = CompactionPipeline()
         self.model_input_auditor = ModelInputAuditor()
+        self.autonomy_policy = AutonomyPolicy()
         # A6: run_id → asyncio.Event，用于外部主动取消
         self._cancel_events: dict[str, asyncio.Event] = {}
 
@@ -172,6 +174,7 @@ class AgentRuntime:
             conversation=previous + [SessionMessage(role="user", content=message)],
             metadata={"tool_ledger": {}, "loaded_tools": list(DEFAULT_LOADED_TOOL_NAMES), "recall_text": recall_text},
         )
+        self._apply_autonomy_policy(state)
         record_timing(state.metadata, "session_io_ms", session_io_ms)
         if self.memory_manager is not None:
             record_timing(state.metadata, "memory_recall_ms", memory_recall_ms)
@@ -783,6 +786,12 @@ class AgentRuntime:
                 if key in response_metadata and key not in preserved:
                     preserved[key] = response_metadata[key]
         return preserved
+
+    def _apply_autonomy_policy(self, state: AgentState) -> None:
+        decision = self.autonomy_policy.decide(state.task, state.conversation[:-1])
+        state.metadata["autonomy_policy"] = decision.to_dict()
+        if decision.plan_mode is not None:
+            state.metadata["plan_mode"] = decision.plan_mode
 
     async def _save_checkpoint(self, state: AgentState) -> None:
         self.checkpoint_store.save(state)

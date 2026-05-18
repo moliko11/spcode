@@ -13,6 +13,8 @@ from packages.runtime.models import AgentState, serialize_message
 def test_build_runtime_smoke() -> None:
     runtime = build_runtime()
     assert runtime.registry.get_spec("tool_search").name == "tool_search"
+    assert runtime.registry.get_spec("task_verify").name == "task_verify"
+    assert runtime.registry.get_spec("task_replan").name == "task_replan"
     assert runtime.registry.get_spec("file_read").name == "file_read"
     assert runtime.session_store is not None
     assert runtime.memory_manager is not None

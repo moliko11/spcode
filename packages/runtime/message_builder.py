@@ -61,6 +61,7 @@ class MessageBuilder:
             "- Use `exit_plan_mode` before performing any write, shell, network, or external side-effect action after plan-only work.\n"
             "- Use `todo_write` to maintain a visible lightweight todo list for complex interactive tasks.\n"
             "- Use task tools only when the user asks for persisted task tracking or the work truly needs a managed multi-step plan.\n"
+            "- Use `task_verify` to record acceptance/test evidence for managed tasks, and `task_replan` when a managed task fails verification.\n"
             "- Use `skill` to load and invoke a skill when relevant.\n"
             "- Use `mcp` only after discovering a relevant MCP capability.\n\n"
             "Dynamic tools:\n"
@@ -92,7 +93,32 @@ class MessageBuilder:
         recall_text = state.metadata.get("recall_text")
         if recall_text:
             prompt += "\n" + recall_text + "\n"
+        autonomy_text = self._autonomy_policy_text(state)
+        if autonomy_text:
+            prompt += "\n" + autonomy_text + "\n"
         return prompt
+
+    def _autonomy_policy_text(self, state: AgentState) -> str:
+        policy = state.metadata.get("autonomy_policy")
+        if not isinstance(policy, dict):
+            return ""
+        mode = str(policy.get("mode") or "direct")
+        lines = ["Autonomous workflow policy for this user message:", f"- Mode: {mode}", f"- Reason: {policy.get('reason') or ''}"]
+        if policy.get("should_use_todo"):
+            lines.append("- Use todo_write early to keep a visible execution plan current.")
+        if policy.get("should_verify"):
+            lines.append("- Verify completed work using tests, inspection, task_verify, or concrete evidence before finalizing.")
+        if policy.get("should_replan_on_failure"):
+            lines.append("- If verification or execution fails, use task_replan or update task state before retrying.")
+        instructions = policy.get("instructions")
+        if isinstance(instructions, list):
+            for item in instructions:
+                if isinstance(item, str) and item.strip():
+                    lines.append(f"- {item.strip()}")
+        plan_mode = state.metadata.get("plan_mode")
+        if isinstance(plan_mode, dict) and plan_mode.get("active"):
+            lines.append("- Plan mode is currently active: do not use write, shell, network, or external side-effect tools.")
+        return "\n".join(lines)
 
     def _current_datetime_text(self) -> dict[str, str]:
         date_text = CURRENT_DATE or datetime.date.today().isoformat()

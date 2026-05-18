@@ -147,14 +147,18 @@ uv run python main.py show-memory --user-id demo-user
 ```text
 user message
   -> recall memory
+     -> apply autonomy policy
   -> build system prompt
-  -> model decides
-  -> maybe call one tool
+     -> model decides direct answer / todo / plan mode / tool execution
+     -> maybe call tools in parallel
   -> checkpoint
   -> feed tool result back
+     -> verify or replan managed tasks when needed
   -> final answer
   -> remember run
 ```
+
+普通 `chat` 会先按输入和近期会话判断本轮模式：简单问题直接答；复杂行动请求会倾向先用 `todo_write` 暴露执行计划；只规划请求会进入 plan mode 并阻断副作用工具；用户批准上一轮计划后会按对话中的计划继续执行。对于托管 workflow 任务，可用 `task_verify` 记录验收/测试证据，用 `task_replan` 对失败任务局部追加或替换后续任务。
 
 ### Plan
 
@@ -230,6 +234,8 @@ user message
 - `task_update`
 - `task_list`
 - `task_output`
+- `task_verify`
+- `task_replan`
 - `task_stop`
 - `skill`
 - `mcp`
@@ -263,6 +269,7 @@ uv run python -m pytest tests/test_core_file_tools.py tests/test_core_search_too
 近期重点：
 
 - 完善 CLI UI 工作台体验，提供类似 Claude Code / Codex 的流式对话、计划、运行、审批和状态入口。
+- 完善普通 chat 的自主规划、验收和失败重规划策略。
 - 修复持久化 ID 的路径安全问题。
 - 让 runtime 失败状态统一落盘，避免异常后 checkpoint 停在 running。
 - 隔离并行 orchestrator 中的 per-run 状态。
@@ -273,9 +280,9 @@ uv run python -m pytest tests/test_core_file_tools.py tests/test_core_search_too
 
 中期目标：
 
-- Plan-only / guided / auto-edit / full-auto-sandbox 等执行模式。
-- Plan validator、verifier 和 replanner。
-- Workflow-level evidence 和 artifact 记录。
+- Plan-only / guided / auto-edit / full-auto-sandbox 等执行模式的用户可配置化。
+- 更完整的 Plan validator、verifier 和 replanner 策略。
+- Workflow-level evidence 和 artifact 记录的 UI 展示。
 - Project instructions 加载，类似 AGENTS.md。
 - 更稳定的长期记忆和语义检索。
 - 任务级资源锁，避免并行编辑冲突。

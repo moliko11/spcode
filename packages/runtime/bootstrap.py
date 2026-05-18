@@ -24,8 +24,10 @@ from packages.tools import (
     TaskCreateTool as CoreTaskCreateTool,
     TaskListTool as CoreTaskListTool,
     TaskOutputTool as CoreTaskOutputTool,
+    TaskReplanTool as CoreTaskReplanTool,
     TaskStopTool as CoreTaskStopTool,
     TaskUpdateTool as CoreTaskUpdateTool,
+    TaskVerifyTool as CoreTaskVerifyTool,
     TodoWriteTool as CoreTodoWriteTool,
     ToolSearchTool as CoreToolSearchTool,
     WebFetchTool as CoreWebFetchTool,
@@ -376,6 +378,53 @@ def build_runtime(
             sandbox_required=True,
         ),
         CoreTaskOutputTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_verify",
+            description="Verify a workflow task using acceptance criteria and optional test-command evidence.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "workflow_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "result_summary": {"type": "string"},
+                    "test_command": {"type": "string"},
+                    "timeout_s": {"type": "integer"},
+                },
+                "required": ["task_id"],
+            },
+            side_effect="local_fs",
+            category="workflow",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTaskVerifyTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR, workspace_root=workspace_dir),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_replan",
+            description="Append or replace follow-up workflow tasks after a failed task.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "failed_task_id": {"type": "string"},
+                    "strategy": {"type": "string", "enum": ["append", "replace"]},
+                    "reason": {"type": "string"},
+                    "new_tasks": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["workflow_id", "new_tasks"],
+            },
+            side_effect="local_fs",
+            category="workflow",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTaskReplanTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(

@@ -331,7 +331,7 @@ class ToolExecutor:
         plan_mode = state.metadata.get("plan_mode")
         if not isinstance(plan_mode, dict) or not plan_mode.get("active"):
             return
-        if spec.name in {"exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop", "tool_search", "file_read", "glob", "grep", "list_dir", "calculator", "get_current_time", "skill", "mcp"}:
+        if spec.name in {"exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_verify", "task_replan", "task_stop", "tool_search", "file_read", "glob", "grep", "list_dir", "calculator", "get_current_time", "skill", "mcp"}:
             return
         if spec.writes_workspace or spec.side_effect in {"local_fs", "shell", "network"} or spec.risk_level in {"medium", "high", "critical"}:
             raise GuardrailViolation(f"plan mode blocks side-effect tool: {spec.name}")

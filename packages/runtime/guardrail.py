@@ -154,7 +154,7 @@ class GuardrailEngine:
             action = arguments.get("action")
             if action is not None and not isinstance(action, str):
                 raise GuardrailViolation(f"{tool_name}.action must be a string")
-        elif tool_name in {"enter_plan_mode", "exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop"}:
+        elif tool_name in {"enter_plan_mode", "exit_plan_mode", "todo_write", "task_create", "task_update", "task_list", "task_output", "task_verify", "task_replan", "task_stop"}:
             self._validate_task_tool_args(tool_name, arguments)
 
     def validate_tool_result(self, result: ToolResult) -> None:
@@ -189,11 +189,11 @@ class GuardrailEngine:
         return resolve_read_path(self.workspace_root, path_str, self.skill_roots)
 
     def _validate_task_tool_args(self, tool_name: str, arguments: dict[str, object]) -> None:
-        for key in ("workflow_id", "plan_id", "plan_run_id", "task_id", "status", "title", "description", "reason", "goal", "context"):
+        for key in ("workflow_id", "plan_id", "plan_run_id", "task_id", "failed_task_id", "status", "title", "description", "reason", "goal", "context", "result_summary", "test_command", "strategy"):
             value = arguments.get(key)
             if value is not None and not isinstance(value, str):
                 raise GuardrailViolation(f"{tool_name}.{key} must be a string")
-        for key in ("dependencies", "acceptance_criteria", "suggested_tools", "target_files", "artifacts", "evidence"):
+        for key in ("dependencies", "acceptance_criteria", "suggested_tools", "target_files", "artifacts", "evidence", "new_tasks"):
             value = arguments.get(key)
             if value is not None and not isinstance(value, list):
                 raise GuardrailViolation(f"{tool_name}.{key} must be a list")
@@ -239,3 +239,20 @@ class GuardrailEngine:
             limit = arguments.get("limit")
             if limit is not None and (not isinstance(limit, int) or limit < 1):
                 raise GuardrailViolation(f"{tool_name}.limit must be a positive integer")
+        if tool_name == "task_verify":
+            task_id = arguments.get("task_id")
+            if not isinstance(task_id, str) or not task_id.strip():
+                raise GuardrailViolation("task_verify.task_id must be a non-empty string")
+            timeout_s = arguments.get("timeout_s")
+            if timeout_s is not None and (not isinstance(timeout_s, int) or timeout_s < 1):
+                raise GuardrailViolation("task_verify.timeout_s must be a positive integer")
+        if tool_name == "task_replan":
+            workflow_id = arguments.get("workflow_id") or arguments.get("plan_id")
+            if not isinstance(workflow_id, str) or not workflow_id.strip():
+                raise GuardrailViolation("task_replan.workflow_id must be a non-empty string")
+            new_tasks = arguments.get("new_tasks")
+            if not isinstance(new_tasks, list) or not new_tasks:
+                raise GuardrailViolation("task_replan.new_tasks must be a non-empty list")
+            strategy = arguments.get("strategy", "append")
+            if strategy not in {"append", "replace"}:
+                raise GuardrailViolation("task_replan.strategy must be append or replace")
