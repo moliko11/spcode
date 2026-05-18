@@ -218,11 +218,17 @@ user message
 - `web_fetch`
 - `bash`
 - `tool_search`
+- `todo_write`
 - `get_current_time`
 - `calculator`
 
 动态工具包括：
 
+- `task_create`
+- `task_update`
+- `task_list`
+- `task_output`
+- `task_stop`
 - `skill`
 - `mcp`
 

@@ -154,7 +154,7 @@ class GuardrailEngine:
             action = arguments.get("action")
             if action is not None and not isinstance(action, str):
                 raise GuardrailViolation(f"{tool_name}.action must be a string")
-        elif tool_name in {"task_create", "task_update", "task_list", "task_output", "task_stop"}:
+        elif tool_name in {"todo_write", "task_create", "task_update", "task_list", "task_output", "task_stop"}:
             self._validate_task_tool_args(tool_name, arguments)
 
     def validate_tool_result(self, result: ToolResult) -> None:
@@ -189,7 +189,7 @@ class GuardrailEngine:
         return resolve_read_path(self.workspace_root, path_str, self.skill_roots)
 
     def _validate_task_tool_args(self, tool_name: str, arguments: dict[str, object]) -> None:
-        for key in ("plan_id", "plan_run_id", "task_id", "status", "title", "description", "reason"):
+        for key in ("workflow_id", "plan_id", "plan_run_id", "task_id", "status", "title", "description", "reason", "goal", "context"):
             value = arguments.get(key)
             if value is not None and not isinstance(value, str):
                 raise GuardrailViolation(f"{tool_name}.{key} must be a string")
@@ -201,6 +201,20 @@ class GuardrailEngine:
             title = arguments.get("title")
             if not isinstance(title, str) or not title.strip():
                 raise GuardrailViolation("task_create.title must be a non-empty string")
+        if tool_name == "todo_write":
+            todos = arguments.get("todos")
+            if not isinstance(todos, list):
+                raise GuardrailViolation("todo_write.todos must be a list")
+            allowed = {"pending", "in_progress", "running", "completed", "blocked", "cancelled", "canceled", "skipped"}
+            for index, item in enumerate(todos):
+                if not isinstance(item, dict):
+                    raise GuardrailViolation(f"todo_write.todos[{index}] must be an object")
+                content = item.get("content", item.get("title"))
+                if not isinstance(content, str) or not content.strip():
+                    raise GuardrailViolation(f"todo_write.todos[{index}].content must be a non-empty string")
+                status = item.get("status")
+                if not isinstance(status, str) or status not in allowed:
+                    raise GuardrailViolation(f"todo_write.todos[{index}].status must be one of: {', '.join(sorted(allowed))}")
         if tool_name == "task_update":
             task_id = arguments.get("task_id")
             if not isinstance(task_id, str) or not task_id.strip():

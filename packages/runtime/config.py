@@ -33,6 +33,7 @@ MEMORY_COMPACTION_DIR = MEMORY_DIR / "compaction"
 
 PLANS_DIR = RUNTIME_DIR / "plans"
 PLAN_RUNS_DIR = RUNTIME_DIR / "plan_runs"
+WORKFLOWS_DIR = RUNTIME_DIR / "workflows"
 
 MAX_STEPS = 20
 MAX_TOOL_CALLS = 20
@@ -62,6 +63,7 @@ DEFAULT_LOADED_TOOL_NAMES = [
     "web_fetch",
     "bash",
     "tool_search",
+    "todo_write",
     "skill",
 ]
 
@@ -80,7 +82,8 @@ TOOL_CATALOG = [
     {"name": "web_fetch", "description": "Fetch and inspect specific URLs.", "category": "web", "tags": ["web", "fetch", "url", "page"], "default_loaded": True, "requires_approval": False},
     {"name": "bash", "description": "Run shell commands in the workspace when specialized tools are insufficient.", "category": "execution", "tags": ["bash", "shell", "command", "terminal"], "default_loaded": True, "requires_approval": True},
     {"name": "tool_search", "description": "Discover available tools and recommend which ones to load next.", "category": "meta", "tags": ["tools", "discover", "catalog", "load"], "default_loaded": True, "requires_approval": False},
-    {"name": "task_create", "description": "Create persisted workflow tasks inside plans.", "category": "workflow", "tags": ["task", "workflow", "plan", "create"], "default_loaded": False, "requires_approval": False},
+    {"name": "todo_write", "description": "Create or update a lightweight visible todo list backed by WorkflowStore.", "category": "workflow", "tags": ["todo", "task", "workflow", "plan", "status"], "default_loaded": True, "requires_approval": False},
+    {"name": "task_create", "description": "Create persisted workflow tasks inside workflows.", "category": "workflow", "tags": ["task", "workflow", "plan", "create"], "default_loaded": False, "requires_approval": False},
     {"name": "task_update", "description": "Update persisted workflow task status, output, evidence, and metadata.", "category": "workflow", "tags": ["task", "workflow", "status", "update"], "default_loaded": False, "requires_approval": False},
     {"name": "task_list", "description": "List persisted workflow tasks from recent plans, a specific plan, or a plan run.", "category": "workflow", "tags": ["task", "workflow", "list", "progress"], "default_loaded": False, "requires_approval": False},
     {"name": "task_output", "description": "Read workflow task, plan, or plan run output.", "category": "workflow", "tags": ["task", "workflow", "output", "evidence"], "default_loaded": False, "requires_approval": False},

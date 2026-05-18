@@ -24,6 +24,7 @@ from packages.tools import (
     TaskOutputTool as CoreTaskOutputTool,
     TaskStopTool as CoreTaskStopTool,
     TaskUpdateTool as CoreTaskUpdateTool,
+    TodoWriteTool as CoreTodoWriteTool,
     ToolSearchTool as CoreToolSearchTool,
     WebFetchTool as CoreWebFetchTool,
     WebSearchTool as CoreWebSearchTool,
@@ -55,6 +56,7 @@ from .config import (
     SHORT_MEMORY_TURNS,
     TEMPERATURE,
     TOOL_CATALOG,
+    WORKFLOWS_DIR,
     WORKSPACE_DIR,
     SKILL_ROOTS,
 )
@@ -195,11 +197,50 @@ def build_runtime(
     )
     registry.register(
         ToolSpec(
-            name="task_create",
-            description="Create a workflow task inside a persisted plan, or create a new ad-hoc plan with one task.",
+            name="todo_write",
+            description="Create or update a lightweight visible todo list backed by WorkflowStore.",
             parameters={
                 "type": "object",
                 "properties": {
+                    "workflow_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "goal": {"type": "string"},
+                    "context": {"type": "string"},
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "task_id": {"type": "string"},
+                                "content": {"type": "string"},
+                                "title": {"type": "string"},
+                                "description": {"type": "string"},
+                                "status": {"type": "string", "enum": ["pending", "in_progress", "running", "completed", "blocked", "cancelled", "skipped"]},
+                                "priority": {"type": "string"},
+                                "linked_step_id": {"type": "string"},
+                            },
+                            "required": ["content", "status"],
+                        },
+                    },
+                },
+                "required": ["todos"],
+            },
+            side_effect="local_fs",
+            category="workflow",
+            sandbox_required=True,
+            cache_policy="none",
+        ),
+        CoreTodoWriteTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
+    )
+    registry.register(
+        ToolSpec(
+            name="task_create",
+            description="Create a workflow task inside a persisted workflow, or create a new ad-hoc workflow with one task.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string"},
                     "plan_id": {"type": "string"},
                     "task_id": {"type": "string"},
                     "goal": {"type": "string"},
@@ -220,7 +261,7 @@ def build_runtime(
             sandbox_required=True,
             cache_policy="none",
         ),
-        CoreTaskCreateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+        CoreTaskCreateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(
@@ -230,6 +271,7 @@ def build_runtime(
                 "type": "object",
                 "properties": {
                     "plan_id": {"type": "string"},
+                    "workflow_id": {"type": "string"},
                     "plan_run_id": {"type": "string"},
                     "task_id": {"type": "string"},
                     "status": {"type": "string", "enum": ["pending", "ready", "running", "waiting_human", "completed", "failed", "skipped", "blocked", "cancelled"]},
@@ -250,15 +292,16 @@ def build_runtime(
             sandbox_required=True,
             cache_policy="none",
         ),
-        CoreTaskUpdateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+        CoreTaskUpdateTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(
             name="task_list",
-            description="List persisted workflow tasks from a plan, a plan run, or recent plans.",
+            description="List persisted workflow tasks from a workflow, a plan run, or recent workflows.",
             parameters={
                 "type": "object",
                 "properties": {
+                    "workflow_id": {"type": "string"},
                     "plan_id": {"type": "string"},
                     "plan_run_id": {"type": "string"},
                     "status_filter": {"type": "string"},
@@ -270,16 +313,17 @@ def build_runtime(
             category="workflow",
             sandbox_required=True,
         ),
-        CoreTaskListTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+        CoreTaskListTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(
             name="task_output",
-            description="Read task, plan, or plan run output including summaries, artifacts, and evidence.",
+            description="Read task, workflow, or plan run output including summaries, artifacts, and evidence.",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string"},
+                    "workflow_id": {"type": "string"},
                     "plan_id": {"type": "string"},
                     "plan_run_id": {"type": "string"},
                 },
@@ -289,16 +333,17 @@ def build_runtime(
             category="workflow",
             sandbox_required=True,
         ),
-        CoreTaskOutputTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+        CoreTaskOutputTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(
             name="task_stop",
-            description="Stop a workflow task, all unfinished tasks in a plan, or a running plan run.",
+            description="Stop a workflow task, all unfinished tasks in a workflow, or a running plan run.",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string"},
+                    "workflow_id": {"type": "string"},
                     "plan_id": {"type": "string"},
                     "plan_run_id": {"type": "string"},
                     "reason": {"type": "string"},
@@ -312,7 +357,7 @@ def build_runtime(
             sandbox_required=True,
             cache_policy="none",
         ),
-        CoreTaskStopTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR),
+        CoreTaskStopTool(plans_dir=PLANS_DIR, plan_runs_dir=PLAN_RUNS_DIR, workflows_dir=WORKFLOWS_DIR),
     )
     registry.register(
         ToolSpec(

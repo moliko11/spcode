@@ -1,53 +1,48 @@
 from __future__ import annotations
 
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
 from packages.orchestrator.models import PlanRun, StepRun, StepRunStatus
 from packages.orchestrator.store import PlanRunStore
-from packages.planner.models import PlanStatus, StepStatus, TaskPlan, TaskStep
 from packages.planner.store import PlanStore
-from packages.runtime.config import PLAN_RUNS_DIR, PLANS_DIR
+from packages.runtime.config import PLAN_RUNS_DIR, PLANS_DIR, WORKFLOWS_DIR
+from packages.workflow.models import WorkflowRun, WorkflowStatus, WorkflowTask, WorkflowTaskStatus
+from packages.workflow.service import WorkflowService
+from packages.workflow.store import WorkflowStore
 
 
-def _as_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if str(item).strip()]
-    if isinstance(value, str) and value.strip():
-        return [value]
-    return []
-
-
-def _step_status(value: str) -> StepStatus:
-    normalized = value.strip().lower()
-    aliases = {
-        "done": StepStatus.COMPLETED,
-        "complete": StepStatus.COMPLETED,
-        "completed": StepStatus.COMPLETED,
-        "cancelled": StepStatus.SKIPPED,
-        "canceled": StepStatus.SKIPPED,
-        "blocked": StepStatus.SKIPPED,
-    }
-    if normalized in aliases:
-        return aliases[normalized]
-    return StepStatus(normalized)
-
-
-def _step_run_status(status: StepStatus) -> StepRunStatus:
+def _step_run_status(status: WorkflowTaskStatus) -> StepRunStatus:
     mapping = {
-        StepStatus.PENDING: StepRunStatus.PENDING,
-        StepStatus.READY: StepRunStatus.PENDING,
-        StepStatus.RUNNING: StepRunStatus.RUNNING,
-        StepStatus.WAITING_HUMAN: StepRunStatus.WAITING_HUMAN,
-        StepStatus.COMPLETED: StepRunStatus.COMPLETED,
-        StepStatus.FAILED: StepRunStatus.FAILED,
-        StepStatus.SKIPPED: StepRunStatus.SKIPPED,
+        WorkflowTaskStatus.PENDING: StepRunStatus.PENDING,
+        WorkflowTaskStatus.READY: StepRunStatus.PENDING,
+        WorkflowTaskStatus.RUNNING: StepRunStatus.RUNNING,
+        WorkflowTaskStatus.WAITING_HUMAN: StepRunStatus.WAITING_HUMAN,
+        WorkflowTaskStatus.COMPLETED: StepRunStatus.COMPLETED,
+        WorkflowTaskStatus.FAILED: StepRunStatus.FAILED,
+        WorkflowTaskStatus.SKIPPED: StepRunStatus.SKIPPED,
+        WorkflowTaskStatus.BLOCKED: StepRunStatus.SKIPPED,
+        WorkflowTaskStatus.CANCELLED: StepRunStatus.SKIPPED,
     }
     return mapping[status]
+
+
+def _todo_status(value: str) -> WorkflowTaskStatus:
+    normalized = value.strip().lower().replace("-", "_")
+    mapping = {
+        "pending": WorkflowTaskStatus.PENDING,
+        "todo": WorkflowTaskStatus.PENDING,
+        "in_progress": WorkflowTaskStatus.RUNNING,
+        "running": WorkflowTaskStatus.RUNNING,
+        "completed": WorkflowTaskStatus.COMPLETED,
+        "done": WorkflowTaskStatus.COMPLETED,
+        "blocked": WorkflowTaskStatus.BLOCKED,
+        "cancelled": WorkflowTaskStatus.CANCELLED,
+        "canceled": WorkflowTaskStatus.CANCELLED,
+        "skipped": WorkflowTaskStatus.SKIPPED,
+    }
+    return mapping.get(normalized, WorkflowTaskStatus.PENDING)
 
 
 class _TaskToolBase:
@@ -55,12 +50,16 @@ class _TaskToolBase:
         self,
         plan_store: PlanStore | None = None,
         plan_run_store: PlanRunStore | None = None,
+        workflow_store: WorkflowStore | None = None,
         *,
         plans_dir: Path = PLANS_DIR,
         plan_runs_dir: Path = PLAN_RUNS_DIR,
+        workflows_dir: Path = WORKFLOWS_DIR,
     ) -> None:
         self.plan_store = plan_store or PlanStore(plans_dir)
         self.plan_run_store = plan_run_store or PlanRunStore(plan_runs_dir)
+        self.workflow_store = workflow_store or WorkflowStore(workflows_dir)
+        self.workflow_service = WorkflowService(self.workflow_store)
 
     def _load_plan(self, plan_id: str) -> TaskPlan:
         plan = self.plan_store.load(plan_id)
@@ -74,162 +73,105 @@ class _TaskToolBase:
             raise ValueError(f"plan_run not found: {plan_run_id}")
         return plan_run
 
-    def _find_step(self, plan: TaskPlan, task_id: str) -> TaskStep:
+    def _ensure_workflow_from_plan(self, workflow_id: str) -> None:
+        if not workflow_id or self.workflow_store.load(workflow_id) is not None:
+            return
+        plan = self.plan_store.load(workflow_id)
+        if plan is None:
+            return
+        status = WorkflowStatus.DRAFT
+        plan_status = getattr(plan.status, "value", str(plan.status))
+        if plan_status in {"running", "waiting_human", "completed", "failed"}:
+            status = WorkflowStatus(plan_status)
+        workflow = WorkflowRun(
+            workflow_id=plan.plan_id,
+            goal=plan.goal,
+            context=plan.context,
+            status=status,
+            metadata={"imported_from_plan": True},
+        )
         for step in plan.steps:
-            if step.step_id == task_id:
-                return step
-        raise ValueError(f"task not found: {task_id}")
+            step_status = getattr(step.status, "value", str(step.status))
+            task_status = WorkflowTaskStatus(step_status) if step_status in WorkflowTaskStatus._value2member_map_ else WorkflowTaskStatus.PENDING
+            workflow.tasks.append(
+                WorkflowTask(
+                    task_id=step.step_id,
+                    title=step.title,
+                    description=step.description,
+                    dependencies=list(step.dependencies),
+                    acceptance_criteria=list(step.acceptance_criteria),
+                    suggested_tools=list(step.suggested_tools),
+                    status=task_status,
+                    result_summary=step.output,
+                    error=step.error,
+                    metadata={**step.metadata, "imported_from_plan_step": True},
+                )
+            )
+        self.workflow_store.save(workflow)
 
-    def _find_plan_containing_task(self, task_id: str) -> TaskPlan:
-        matches = [
-            plan
-            for plan in self.plan_store.list_recent(limit=200)
-            if any(step.step_id == task_id for step in plan.steps)
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            plan_ids = ", ".join(plan.plan_id for plan in matches[:5])
-            raise ValueError(f"task_id is ambiguous; provide plan_id. matches: {plan_ids}")
-        raise ValueError(f"task not found: {task_id}")
+    def _ensure_workflow_argument(self, arguments: dict[str, Any]) -> None:
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
+        self._ensure_workflow_from_plan(workflow_id)
 
-    def _step_to_dict(self, step: TaskStep, plan_id: str) -> dict[str, Any]:
-        data = step.to_dict()
-        data["task_id"] = step.step_id
-        data["plan_id"] = plan_id
+    def _task_to_dict(self, task: WorkflowTask, workflow_id: str) -> dict[str, Any]:
+        data = task.to_dict()
+        data["workflow_id"] = workflow_id
+        data["plan_id"] = workflow_id
         return data
 
-    def _validate_dependencies(self, plan: TaskPlan, dependencies: list[str], *, task_id: str | None = None) -> None:
-        existing = {step.step_id for step in plan.steps}
-        missing = [dep for dep in dependencies if dep not in existing]
-        if missing:
-            raise ValueError(f"dependencies not found in plan: {', '.join(missing)}")
-        if task_id and task_id in dependencies:
-            raise ValueError("task cannot depend on itself")
+    def _workflow_to_plan_like_dict(self, workflow: WorkflowRun) -> dict[str, Any]:
+        data = workflow.to_dict()
+        data["plan_id"] = workflow.workflow_id
+        data["steps"] = [self._task_to_dict(task, workflow.workflow_id) for task in workflow.tasks]
+        return data
 
 
 class TaskCreateTool(_TaskToolBase):
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        plan_id = str(arguments.get("plan_id") or "").strip()
-        if plan_id:
-            plan = self._load_plan(plan_id)
-        else:
-            plan = TaskPlan(
-                goal=str(arguments.get("goal") or "Ad-hoc task plan"),
-                context=str(arguments.get("context") or ""),
-            )
-
-        task_id = str(arguments.get("task_id") or f"task_{uuid.uuid4().hex[:8]}")
-        if any(step.step_id == task_id for step in plan.steps):
-            raise ValueError(f"task already exists: {task_id}")
-        dependencies = _as_list(arguments.get("dependencies"))
-        self._validate_dependencies(plan, dependencies, task_id=task_id)
-
-        step = TaskStep(
-            step_id=task_id,
-            title=str(arguments.get("title") or task_id),
-            description=str(arguments.get("description") or ""),
-            dependencies=dependencies,
-            acceptance_criteria=_as_list(arguments.get("acceptance_criteria")),
-            suggested_tools=_as_list(arguments.get("suggested_tools")),
-            metadata={
-                "source": "task_create_tool",
-                "target_files": _as_list(arguments.get("target_files")),
-                "artifacts": arguments.get("artifacts") if isinstance(arguments.get("artifacts"), list) else [],
-                "evidence": arguments.get("evidence") if isinstance(arguments.get("evidence"), list) else [],
-            },
-        )
-        plan.steps.append(step)
-        plan.updated_at = time.time()
-        self.plan_store.save(plan)
+        self._ensure_workflow_argument(arguments)
+        workflow, task, created_workflow = self.workflow_service.create_task(arguments)
 
         return {
             "ok": True,
             "tool_name": "task_create",
-            "plan_id": plan.plan_id,
-            "task_id": step.step_id,
-            "task": self._step_to_dict(step, plan.plan_id),
+            "workflow_id": workflow.workflow_id,
+            "plan_id": workflow.workflow_id,
+            "task_id": task.task_id,
+            "task": self._task_to_dict(task, workflow.workflow_id),
             "changed_files": [],
-            "metadata": {"created_plan": not bool(plan_id)},
+            "metadata": {"created_workflow": created_workflow, "created_plan": created_workflow},
         }
 
 
 class TaskUpdateTool(_TaskToolBase):
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        task_id = str(arguments.get("task_id") or "").strip()
-        if not task_id:
-            raise ValueError("task_id is required")
-
-        plan_id = str(arguments.get("plan_id") or "").strip()
-        plan = self._load_plan(plan_id) if plan_id else self._find_plan_containing_task(task_id)
-        step = self._find_step(plan, task_id)
-
-        if "status" in arguments and arguments["status"] is not None:
-            new_status = _step_status(str(arguments["status"]))
-            self._validate_transition(step.status, new_status)
-            step.status = new_status
-        if "title" in arguments and arguments["title"] is not None:
-            step.title = str(arguments["title"])
-        if "description" in arguments and arguments["description"] is not None:
-            step.description = str(arguments["description"])
-        if "result_summary" in arguments and arguments["result_summary"] is not None:
-            step.output = str(arguments["result_summary"])
-        if "error" in arguments and arguments["error"] is not None:
-            step.error = str(arguments["error"])
-        if "acceptance_criteria" in arguments:
-            step.acceptance_criteria = _as_list(arguments.get("acceptance_criteria"))
-        if "dependencies" in arguments:
-            dependencies = _as_list(arguments.get("dependencies"))
-            self._validate_dependencies(plan, dependencies, task_id=task_id)
-            step.dependencies = dependencies
-        if "target_files" in arguments:
-            step.metadata["target_files"] = _as_list(arguments.get("target_files"))
-        if isinstance(arguments.get("artifacts"), list):
-            step.metadata["artifacts"] = arguments["artifacts"]
-        if isinstance(arguments.get("evidence"), list):
-            step.metadata["evidence"] = arguments["evidence"]
-
-        plan.updated_at = time.time()
-        self.plan_store.save(plan)
+        self._ensure_workflow_argument(arguments)
+        workflow, task = self.workflow_service.update_task(arguments)
 
         plan_run_id = str(arguments.get("plan_run_id") or "").strip()
         if plan_run_id:
-            self._sync_plan_run(plan_run_id, step)
+            self._sync_plan_run(plan_run_id, task)
 
         return {
             "ok": True,
             "tool_name": "task_update",
-            "plan_id": plan.plan_id,
-            "task_id": step.step_id,
-            "task": self._step_to_dict(step, plan.plan_id),
+            "workflow_id": workflow.workflow_id,
+            "plan_id": workflow.workflow_id,
+            "task_id": task.task_id,
+            "task": self._task_to_dict(task, workflow.workflow_id),
             "changed_files": [],
         }
 
-    def _validate_transition(self, old: StepStatus, new: StepStatus) -> None:
-        if old == new:
-            return
-        allowed = {
-            StepStatus.PENDING: {StepStatus.READY, StepStatus.RUNNING, StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
-            StepStatus.READY: {StepStatus.RUNNING, StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
-            StepStatus.RUNNING: {StepStatus.WAITING_HUMAN, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
-            StepStatus.WAITING_HUMAN: {StepStatus.RUNNING, StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.SKIPPED},
-            StepStatus.COMPLETED: set(),
-            StepStatus.FAILED: {StepStatus.PENDING, StepStatus.SKIPPED},
-            StepStatus.SKIPPED: set(),
-        }
-        if new not in allowed.get(old, set()):
-            raise ValueError(f"invalid task status transition: {old.value} -> {new.value}")
-
-    def _sync_plan_run(self, plan_run_id: str, step: TaskStep) -> None:
+    def _sync_plan_run(self, plan_run_id: str, task: WorkflowTask) -> None:
         plan_run = self._load_plan_run(plan_run_id)
-        step_run = next((item for item in plan_run.step_runs if item.step_id == step.step_id), None)
+        step_run = next((item for item in plan_run.step_runs if item.step_id == task.task_id), None)
         if step_run is None:
-            step_run = StepRun(step_id=step.step_id, title=step.title)
+            step_run = StepRun(step_id=task.task_id, title=task.title)
             plan_run.step_runs.append(step_run)
-        step_run.title = step.title
-        step_run.status = _step_run_status(step.status)
-        step_run.output = step.output
-        step_run.error = step.error
+        step_run.title = task.title
+        step_run.status = _step_run_status(task.status)
+        step_run.output = task.result_summary
+        step_run.error = task.error
         step_run.metadata.setdefault("task_update_tool", True)
         self.plan_run_store.save(plan_run)
 
@@ -242,17 +184,14 @@ class TaskListTool(_TaskToolBase):
 
         if plan_run_id:
             plan_run = self._load_plan_run(plan_run_id)
-            plan = self._load_plan(plan_run.plan_id)
-            tasks = [self._step_to_dict(step, plan.plan_id) for step in plan.steps]
+            self._ensure_workflow_from_plan(plan_run.plan_id)
+            pairs = self.workflow_service.list_tasks(workflow_id=plan_run.plan_id, status_filter=status_filter, limit=limit)
         else:
-            plan_id = str(arguments.get("plan_id") or "").strip()
-            plans = [self._load_plan(plan_id)] if plan_id else self.plan_store.list_recent(limit=limit)
-            tasks = []
-            for plan in plans:
-                tasks.extend(self._step_to_dict(step, plan.plan_id) for step in plan.steps)
+            workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
+            self._ensure_workflow_from_plan(workflow_id)
+            pairs = self.workflow_service.list_tasks(workflow_id=workflow_id, status_filter=status_filter, limit=limit)
 
-        if status_filter:
-            tasks = [task for task in tasks if str(task.get("status")) == status_filter]
+        tasks = [self._task_to_dict(task, workflow.workflow_id) for workflow, task in pairs]
 
         return {
             "ok": True,
@@ -268,20 +207,21 @@ class TaskOutputTool(_TaskToolBase):
     async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
         task_id = str(arguments.get("task_id") or "").strip()
         plan_run_id = str(arguments.get("plan_run_id") or "").strip()
-        plan_id = str(arguments.get("plan_id") or "").strip()
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
 
         if task_id:
-            plan = self._load_plan(plan_id) if plan_id else self._find_plan_containing_task(task_id)
-            step = self._find_step(plan, task_id)
+            self._ensure_workflow_from_plan(workflow_id)
+            workflow, task = self.workflow_service.task_output(task_id, workflow_id=workflow_id)
             return {
                 "ok": True,
                 "tool_name": "task_output",
-                "plan_id": plan.plan_id,
+                "workflow_id": workflow.workflow_id,
+                "plan_id": workflow.workflow_id,
                 "task_id": task_id,
-                "task": self._step_to_dict(step, plan.plan_id),
-                "output": step.output,
-                "artifacts": step.metadata.get("artifacts", []),
-                "evidence": step.metadata.get("evidence", []),
+                "task": self._task_to_dict(task, workflow.workflow_id),
+                "output": task.result_summary,
+                "artifacts": [item.to_dict() for item in task.artifacts],
+                "evidence": [item.to_dict() for item in task.evidence],
                 "changed_files": [],
             }
 
@@ -296,14 +236,17 @@ class TaskOutputTool(_TaskToolBase):
                 "changed_files": [],
             }
 
-        if plan_id:
-            plan = self._load_plan(plan_id)
+        if workflow_id:
+            self._ensure_workflow_from_plan(workflow_id)
+            workflow = self.workflow_service.load_workflow(workflow_id)
             return {
                 "ok": True,
                 "tool_name": "task_output",
-                "plan_id": plan_id,
-                "plan": plan.to_dict(),
-                "tasks": [self._step_to_dict(step, plan.plan_id) for step in plan.steps],
+                "workflow_id": workflow.workflow_id,
+                "plan_id": workflow.workflow_id,
+                "workflow": workflow.to_dict(),
+                "plan": self._workflow_to_plan_like_dict(workflow),
+                "tasks": [self._task_to_dict(task, workflow.workflow_id) for task in workflow.tasks],
                 "changed_files": [],
             }
 
@@ -315,33 +258,13 @@ class TaskStopTool(_TaskToolBase):
         reason = str(arguments.get("reason") or "stopped by task_stop")
         task_id = str(arguments.get("task_id") or "").strip()
         plan_run_id = str(arguments.get("plan_run_id") or "").strip()
-        plan_id = str(arguments.get("plan_id") or "").strip()
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
 
         stopped: list[dict[str, str]] = []
 
-        if task_id:
-            plan = self._load_plan(plan_id) if plan_id else self._find_plan_containing_task(task_id)
-            step = self._find_step(plan, task_id)
-            step.status = StepStatus.SKIPPED
-            step.error = reason
-            step.metadata["stopped"] = True
-            step.metadata["stop_reason"] = reason
-            plan.updated_at = time.time()
-            self.plan_store.save(plan)
-            stopped.append({"plan_id": plan.plan_id, "task_id": task_id})
-
-        if plan_id and not task_id:
-            plan = self._load_plan(plan_id)
-            for step in plan.steps:
-                if step.status in {StepStatus.PENDING, StepStatus.READY, StepStatus.RUNNING, StepStatus.WAITING_HUMAN}:
-                    step.status = StepStatus.SKIPPED
-                    step.error = reason
-                    step.metadata["stopped"] = True
-                    step.metadata["stop_reason"] = reason
-                    stopped.append({"plan_id": plan.plan_id, "task_id": step.step_id})
-            plan.status = PlanStatus.FAILED
-            plan.updated_at = time.time()
-            self.plan_store.save(plan)
+        if task_id or workflow_id:
+            self._ensure_workflow_from_plan(workflow_id)
+            stopped.extend(self.workflow_service.stop(workflow_id=workflow_id, task_id=task_id, reason=reason))
 
         if plan_run_id:
             plan_run = self._load_plan_run(plan_run_id)
@@ -356,8 +279,8 @@ class TaskStopTool(_TaskToolBase):
             self.plan_run_store.save(plan_run)
             stopped.append({"plan_run_id": plan_run_id, "task_id": "*"})
 
-        if not any([task_id, plan_id, plan_run_id]):
-            raise ValueError("one of task_id, plan_id, or plan_run_id is required")
+        if not any([task_id, workflow_id, plan_run_id]):
+            raise ValueError("one of task_id, workflow_id, plan_id, or plan_run_id is required")
 
         return {
             "ok": True,
@@ -365,4 +288,68 @@ class TaskStopTool(_TaskToolBase):
             "stopped": stopped,
             "reason": reason,
             "changed_files": [],
+        }
+
+
+class TodoWriteTool(_TaskToolBase):
+    async def arun(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        todos = arguments.get("todos")
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a list")
+
+        workflow_id = str(arguments.get("workflow_id") or arguments.get("plan_id") or "").strip()
+        if workflow_id:
+            workflow = self.workflow_service.load_workflow(workflow_id)
+            created_workflow = False
+        else:
+            workflow = WorkflowRun(
+                goal=str(arguments.get("goal") or "Todo list"),
+                context=str(arguments.get("context") or ""),
+            )
+            created_workflow = True
+
+        existing = {task.task_id: task for task in workflow.tasks}
+        for index, raw_todo in enumerate(todos, 1):
+            if not isinstance(raw_todo, dict):
+                raise ValueError("each todo must be an object")
+            task_id = str(raw_todo.get("id") or raw_todo.get("task_id") or f"todo_{index}").strip()
+            content = str(raw_todo.get("content") or raw_todo.get("title") or task_id).strip()
+            if not content:
+                raise ValueError("todo content must be non-empty")
+            status = _todo_status(str(raw_todo.get("status") or "pending"))
+            task = existing.get(task_id)
+            if task is None:
+                task = WorkflowTask(
+                    task_id=task_id,
+                    title=content,
+                    description=str(raw_todo.get("description") or ""),
+                    status=status,
+                    metadata={"source": "todo_write_tool"},
+                )
+                workflow.tasks.append(task)
+                existing[task_id] = task
+            else:
+                task.title = content
+                if "description" in raw_todo:
+                    task.description = str(raw_todo.get("description") or "")
+                task.status = status
+                task.updated_at = time.time()
+            if raw_todo.get("priority") is not None:
+                task.metadata["priority"] = str(raw_todo["priority"])
+            if raw_todo.get("linked_step_id") is not None:
+                task.metadata["linked_step_id"] = str(raw_todo["linked_step_id"])
+
+        workflow.updated_at = time.time()
+        self.workflow_service._refresh_workflow_status(workflow)
+        self.workflow_store.save(workflow)
+
+        return {
+            "ok": True,
+            "tool_name": "todo_write",
+            "workflow_id": workflow.workflow_id,
+            "plan_id": workflow.workflow_id,
+            "todos": [self._task_to_dict(task, workflow.workflow_id) for task in workflow.tasks],
+            "count": len(workflow.tasks),
+            "changed_files": [],
+            "metadata": {"created_workflow": created_workflow},
         }
