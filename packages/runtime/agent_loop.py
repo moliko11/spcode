@@ -22,6 +22,7 @@ from .model_input_audit import ModelInputAuditor
 from .models import (
     AgentEvent,
     AgentState,
+    BudgetExceeded,
     EventKind,
     EventType,
     HumanInterventionRequired,
@@ -44,6 +45,8 @@ from .models import (
 class RunCancelled(Exception):
     """外部通过 cancel() 主动取消 run 时抛出。"""
 from packages.memory.compaction import CompactionPipeline
+from .degraded import DegradedHandler
+from .reflection import ReflectionEngine
 from .registry import ToolRegistry
 from .store import FileCheckpointStore, FileSessionStore
 from .timing import elapsed_ms, now, record_timing
@@ -78,6 +81,8 @@ class AgentRuntime:
         self.compaction_pipeline = CompactionPipeline()
         self.model_input_auditor = ModelInputAuditor()
         self.autonomy_policy = AutonomyPolicy()
+        self.reflection_engine = ReflectionEngine()
+        self.degraded_handler = DegradedHandler()
         # A6: run_id → asyncio.Event，用于外部主动取消
         self._cancel_events: dict[str, asyncio.Event] = {}
 
@@ -339,10 +344,20 @@ class AgentRuntime:
             if cancel_ev is not None and cancel_ev.is_set():
                 raise RunCancelled("run cancelled externally")
             state.updated_at = time.time()
-            self.budget_controller.check(state)
+            try:
+                self.budget_controller.check(state)
+            except BudgetExceeded as _budget_exc:
+                self.degraded_handler.handle(state, _budget_exc)
+                await self._finalize(state)
+                return state
             runtime_messages = self._refresh_system_prompt(state, [deserialize_message(m) for m in state.runtime_messages])
 
             if state.phase == Phase.DECIDING:
+                # Loop detection: inject reflection note into system prompt if repetitive
+                _loop_note = self.reflection_engine.reflect_on_loop(state)
+                if _loop_note is not None:
+                    state.metadata["_reflection"] = _loop_note.to_prompt_text()
+                    runtime_messages = self._refresh_system_prompt(state, runtime_messages)
                 # Phase B: compaction before model call
                 _stats_before = state.metadata.get("compaction_stats", {})
                 compaction_start = now()
@@ -482,6 +497,14 @@ class AgentRuntime:
                     state.final_output = answer
                     state.status = RunStatus.COMPLETED
                     state.phase = Phase.COMPLETED
+                    # Pre-finalize self-check: log incomplete-output warnings to metadata
+                    _pf_check = self.reflection_engine.pre_finalize_check(state)
+                    if _pf_check is not None:
+                        state.metadata.setdefault("reflection_checks", []).append({
+                            "category": _pf_check.category,
+                            "severity": _pf_check.severity,
+                            "message": _pf_check.message,
+                        })
                     await self._finalize(state)
                     return state
 
@@ -614,6 +637,14 @@ class AgentRuntime:
                         payload={"tool_name": ac.tool_name, "ok": ar.ok},
                     ))
                 state.metadata["tool_ledger"] = self.idempotency_store.export_snapshot()
+                # Reflect on first failure in this batch and inject into system prompt
+                for _ar in all_results:
+                    if not _ar.ok:
+                        _fail_note = self.reflection_engine.reflect_on_failure(
+                            state, Exception(_ar.error or "tool failed")
+                        )
+                        state.metadata["_reflection"] = _fail_note.to_prompt_text()
+                        break
                 runtime_messages = self._refresh_system_prompt(state, runtime_messages)
                 state.runtime_messages = [serialize_message(m) for m in runtime_messages]
                 state.pending_tool_call = None
@@ -664,6 +695,12 @@ class AgentRuntime:
                 result = ToolResult(**state.pending_tool_result)
                 runtime_messages.append(ToolMessage(content=normalize_tool_message(result), tool_call_id=call.call_id))
                 self._apply_dynamic_tool_loading(state, result)
+                # Reflect on tool failure and inject note for next model call
+                if not result.ok:
+                    _fail_note = self.reflection_engine.reflect_on_failure(
+                        state, Exception(result.error or "tool failed")
+                    )
+                    state.metadata["_reflection"] = _fail_note.to_prompt_text()
                 runtime_messages = self._refresh_system_prompt(state, runtime_messages)
                 state.runtime_messages = [serialize_message(m) for m in runtime_messages]
                 state.pending_tool_call = None
