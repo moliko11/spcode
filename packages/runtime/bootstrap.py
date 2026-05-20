@@ -17,9 +17,14 @@ from packages.tools import (
     FileEditTool as CoreFileEditTool,
     FileReadTool as CoreFileReadTool,
     FileWriteTool as CoreFileWriteTool,
+    FindSymbolTool as CoreFindSymbolTool,
+    GitDiffTool as CoreGitDiffTool,
+    GitLogTool as CoreGitLogTool,
     GlobTool as CoreGlobTool,
     GrepTool as CoreGrepTool,
+    LintTool as CoreLintTool,
     MCPTool as CoreMCPTool,
+    RunTestsTool as CoreRunTestsTool,
     SkillTool as CoreSkillTool,
     TaskCreateTool as CoreTaskCreateTool,
     TaskListTool as CoreTaskListTool,
@@ -701,6 +706,101 @@ def build_runtime(
             approval_policy="always",
         ),
         CoreBashTool(session_manager=BashSessionManager(workspace_root=workspace_dir)),
+    )
+    registry.register(
+        ToolSpec(
+            name="run_tests",
+            description="Run the project test suite (pytest) and return pass/fail results.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "args": {"type": "string"},
+                    "timeout": {"type": "integer"},
+                },
+                "required": [],
+            },
+            category="code",
+        ),
+        CoreRunTestsTool(workspace_root=workspace_dir),
+    )
+    registry.register(
+        ToolSpec(
+            name="lint",
+            description="Run ruff (or pyflakes) on workspace code and return lint issues.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "fix": {"type": "boolean"},
+                    "timeout": {"type": "integer"},
+                },
+                "required": [],
+            },
+            readonly=False,
+            risk_level="medium",
+            category="code",
+        ),
+        CoreLintTool(workspace_root=workspace_dir),
+    )
+    registry.register(
+        ToolSpec(
+            name="git_diff",
+            description="Show git diff for workspace changes, staged files, or between commits.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "staged": {"type": "boolean"},
+                    "commit": {"type": "string"},
+                    "path": {"type": "string"},
+                    "stat": {"type": "boolean"},
+                    "timeout": {"type": "integer"},
+                },
+                "required": [],
+            },
+            category="code",
+        ),
+        CoreGitDiffTool(workspace_root=workspace_dir),
+    )
+    registry.register(
+        ToolSpec(
+            name="git_log",
+            description="Show git commit history to understand code evolution.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "path": {"type": "string"},
+                    "author": {"type": "string"},
+                    "since": {"type": "string"},
+                    "oneline": {"type": "boolean"},
+                    "timeout": {"type": "integer"},
+                },
+                "required": [],
+            },
+            category="code",
+        ),
+        CoreGitLogTool(workspace_root=workspace_dir),
+    )
+    registry.register(
+        ToolSpec(
+            name="find_symbol",
+            description="Find class, function, or variable definitions in Python files using AST.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "path": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["any", "class", "function", "variable"]},
+                    "max_results": {"type": "integer"},
+                },
+                "required": ["symbol"],
+            },
+            side_effect="local_fs",
+            category="code",
+            sandbox_required=True,
+        ),
+        CoreFindSymbolTool(workspace_root=workspace_dir),
     )
 
     event_bus = EventBus()

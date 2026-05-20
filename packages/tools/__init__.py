@@ -1,5 +1,10 @@
 from .BashTool import BashSessionManager, BashTool
 from .EnterPlanModeTool import EnterPlanModeTool
+from .FindSymbolTool import FindSymbolTool
+from .GitDiffTool import GitDiffTool
+from .GitLogTool import GitLogTool
+from .LintTool import LintTool
+from .RunTestsTool import RunTestsTool
 from .ExitPlanModeTool import ExitPlanModeTool
 from .FileEditTool import FileEditTool
 from .FileReadTool import FileReadTool
@@ -24,6 +29,11 @@ __all__ = [
     "BashSessionManager",
     "BashTool",
     "EnterPlanModeTool",
+    "FindSymbolTool",
+    "GitDiffTool",
+    "GitLogTool",
+    "LintTool",
+    "RunTestsTool",
     "ExitPlanModeTool",
     "FileReadTool",
     "FileWriteTool",

@@ -67,6 +67,11 @@ DEFAULT_LOADED_TOOL_NAMES = [
     "tool_search",
     "todo_write",
     "skill",
+    "run_tests",
+    "lint",
+    "git_diff",
+    "git_log",
+    "find_symbol",
 ]
 
 DYNAMIC_TOOL_NAMES = ["task_create", "task_update", "task_list", "task_output", "task_verify", "task_replan", "task_stop", "mcp"]
@@ -96,6 +101,11 @@ TOOL_CATALOG = [
     {"name": "task_stop", "description": "Stop a task, plan, or plan run.", "category": "workflow", "tags": ["task", "workflow", "stop", "cancel"], "default_loaded": False, "requires_approval": False},
     {"name": "skill", "description": "Discover, inspect, and read local skills.", "category": "meta", "tags": ["skill", "workflow", "prompt", "local"], "default_loaded": False, "requires_approval": False},
     {"name": "mcp", "description": "Inspect locally configured MCP servers, resources, prompts, and tools.", "category": "integration", "tags": ["mcp", "server", "resource", "integration"], "default_loaded": False, "requires_approval": False},
+    {"name": "run_tests", "description": "Run the project test suite (pytest) and return pass/fail results.", "category": "code", "tags": ["test", "pytest", "quality", "ci"], "default_loaded": True, "requires_approval": False},
+    {"name": "lint", "description": "Run ruff (or pyflakes) on workspace code and return lint issues.", "category": "code", "tags": ["lint", "ruff", "quality", "static-analysis"], "default_loaded": True, "requires_approval": False},
+    {"name": "git_diff", "description": "Show git diff for workspace changes, staged files, or between commits.", "category": "code", "tags": ["git", "diff", "changes", "review"], "default_loaded": True, "requires_approval": False},
+    {"name": "git_log", "description": "Show git commit history to understand code evolution.", "category": "code", "tags": ["git", "log", "history", "commits"], "default_loaded": True, "requires_approval": False},
+    {"name": "find_symbol", "description": "Find class, function, or variable definitions in Python files using AST.", "category": "code", "tags": ["ast", "symbol", "navigate", "definition"], "default_loaded": True, "requires_approval": False},
 ]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
