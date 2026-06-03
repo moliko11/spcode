@@ -814,6 +814,7 @@ def build_runtime(
         llm_client=NativeToolCallingLLMClient(llm=llm, model_name=active_model_name),
         message_builder=MessageBuilder(
             short_memory_turns=runtime_config.short_memory_turns,
+            default_loaded_tool_names=runtime_config.default_loaded_tool_names,
             skill_tool=skill_tool_instance,
             workspace_root=workspace_dir,
         ),
@@ -833,6 +834,7 @@ def build_runtime(
             max_high_risk_tool_calls=max_high_risk_tool_calls if max_high_risk_tool_calls is not None else runtime_config.max_high_risk_tool_calls,
         ),
         idempotency_store=idempotency_store,
+        default_loaded_tool_names=runtime_config.default_loaded_tool_names,
     )
     runtime.memory_manager = MemoryManager(
         store=FileMemoryStore(MEMORY_USERS_DIR),

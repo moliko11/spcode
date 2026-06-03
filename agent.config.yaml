@@ -6,6 +6,28 @@ model:
 
 runtime:
   workspace_root: ./runtime_data/workspace
+  loaded_tools:
+    - get_current_time
+    - calculator
+    - enter_plan_mode
+    - exit_plan_mode
+    - file_read
+    - file_write
+    - file_edit
+    - glob
+    - grep
+    - list_dir
+    - web_search
+    - web_fetch
+    - bash
+    - tool_search
+    - todo_write
+    - skill
+    - run_tests
+    - lint
+    - git_diff
+    - git_log
+    - find_symbol
   short_memory_turns: 8
 
 budget:

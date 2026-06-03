@@ -11,7 +11,6 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from .autonomy import AutonomyPolicy
 from .budget import BudgetController, IdempotencyStore
-from .config import DEFAULT_LOADED_TOOL_NAMES
 from .cost import CostTracker, TokenUsage
 from .events import EventBus
 from .executor import ToolExecutor
@@ -65,6 +64,7 @@ class AgentRuntime:
         guardrail_engine: GuardrailEngine,
         budget_controller: BudgetController,
         idempotency_store: IdempotencyStore,
+        default_loaded_tool_names: list[str] | None = None,
     ) -> None:
         self.failpoint: str | None = None
         self.llm_client = llm_client
@@ -77,6 +77,7 @@ class AgentRuntime:
         self.guardrail_engine = guardrail_engine
         self.budget_controller = budget_controller
         self.idempotency_store = idempotency_store
+        self.default_loaded_tool_names = list(default_loaded_tool_names or message_builder.default_loaded_tool_names)
         self.memory_manager = None
         self.compaction_pipeline = CompactionPipeline()
         self.model_input_auditor = ModelInputAuditor()
@@ -177,7 +178,7 @@ class AgentRuntime:
             status=RunStatus.RUNNING,
             phase=Phase.DECIDING,
             conversation=previous + [SessionMessage(role="user", content=message)],
-            metadata={"tool_ledger": {}, "loaded_tools": list(DEFAULT_LOADED_TOOL_NAMES), "recall_text": recall_text},
+            metadata={"tool_ledger": {}, "loaded_tools": list(self.default_loaded_tool_names), "recall_text": recall_text},
         )
         self._apply_autonomy_policy(state)
         record_timing(state.metadata, "session_io_ms", session_io_ms)
@@ -726,7 +727,7 @@ class AgentRuntime:
     def _visible_tool_names(self, state: AgentState) -> list[str]:
         loaded = state.metadata.get("loaded_tools")
         if not isinstance(loaded, list) or not loaded:
-            state.metadata["loaded_tools"] = list(DEFAULT_LOADED_TOOL_NAMES)
+            state.metadata["loaded_tools"] = list(self.default_loaded_tool_names)
             loaded = state.metadata["loaded_tools"]
         return [str(name) for name in loaded]
 

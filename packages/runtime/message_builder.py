@@ -19,10 +19,12 @@ class MessageBuilder:
     def __init__(
         self,
         short_memory_turns: int = SHORT_MEMORY_TURNS,
+        default_loaded_tool_names: list[str] | None = None,
         skill_tool: "SkillTool | None" = None,
         workspace_root: str | Path | None = None,
     ) -> None:
         self.short_memory_turns = short_memory_turns
+        self.default_loaded_tool_names = list(default_loaded_tool_names or DEFAULT_LOADED_TOOL_NAMES)
         self.skill_tool = skill_tool
         self.workspace_root = Path(workspace_root).resolve() if workspace_root is not None else WORKSPACE_DIR.resolve()
         self._selector = PromptSelector(
@@ -31,7 +33,7 @@ class MessageBuilder:
         )
 
     def build_system_prompt(self, state: AgentState) -> str:
-        loaded_tools = state.metadata.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES)
+        loaded_tools = state.metadata.get("loaded_tools", self.default_loaded_tool_names)
         loaded = ", ".join(str(name) for name in loaded_tools)
         dynamic = ", ".join(DYNAMIC_TOOL_NAMES)
         current_dt = self._current_datetime_text()

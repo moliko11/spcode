@@ -101,6 +101,12 @@ model:
 
 runtime:
      workspace_root: ./runtime_data/workspace
+     loaded_tools:
+          - get_current_time
+          - calculator
+          - file_read
+          - grep
+          - tool_search
      short_memory_turns: 8
 
 budget:
@@ -180,7 +186,7 @@ Phase 5 起，推荐把仓库根目录的 `agent.config.yaml` 作为主配置入
 当前支持这些配置段：
 
 - `model.url` / `model.name` / `model.api_key` / `model.temperature`
-- `runtime.workspace_root` / `runtime.short_memory_turns`
+- `runtime.workspace_root` / `runtime.loaded_tools` / `runtime.short_memory_turns`
 - `budget.max_steps` / `budget.max_tool_calls` / `budget.max_state_tool_calls`
 - `budget.max_read_tool_calls` / `budget.max_network_tool_calls` / `budget.max_high_risk_tool_calls` / `budget.max_seconds`
 - `skills.roots`

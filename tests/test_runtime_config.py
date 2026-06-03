@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import packages.runtime.bootstrap as bootstrap_module
-from packages.runtime.config import MODEL_NAME, WORKSPACE_DIR, load_runtime_config
+from packages.runtime.config import DEFAULT_LOADED_TOOL_NAMES, MODEL_NAME, WORKSPACE_DIR, load_runtime_config
 
 
 class _FakeLoader:
@@ -20,6 +21,7 @@ def test_load_runtime_config_returns_defaults_when_file_missing(tmp_path: Path) 
 
     assert cfg.model_name == MODEL_NAME
     assert cfg.workspace_root == WORKSPACE_DIR.resolve()
+    assert cfg.default_loaded_tool_names == DEFAULT_LOADED_TOOL_NAMES
     assert cfg.source_path is None
 
 
@@ -37,6 +39,9 @@ model:
   temperature: 0.25
 runtime:
   workspace_root: ./workspace
+  loaded_tools:
+    - file_read
+    - grep
   short_memory_turns: 5
 budget:
   max_steps: 11
@@ -61,6 +66,7 @@ skills:
     assert cfg.api_key == "secret-key"
     assert cfg.temperature == 0.25
     assert cfg.workspace_root == workspace.resolve()
+    assert cfg.default_loaded_tool_names == ["file_read", "grep"]
     assert cfg.short_memory_turns == 5
     assert cfg.max_steps == 11
     assert cfg.max_tool_calls == 12
@@ -85,6 +91,10 @@ model:
   temperature: 0.15
 runtime:
   workspace_root: ./configured-workspace
+  loaded_tools:
+    - file_read
+    - grep
+    - find_symbol
   short_memory_turns: 4
 budget:
   max_steps: 7
@@ -124,6 +134,7 @@ skills:
     assert file_read.workspace_root == (tmp_path / "configured-workspace").resolve()
     assert runtime.guardrail_engine.skill_roots == [(tmp_path / "configured-skills").resolve()]
     assert runtime.message_builder.short_memory_turns == 4
+    assert runtime.message_builder.default_loaded_tool_names == ["file_read", "grep", "find_symbol"]
     assert runtime.budget_controller.max_steps == 7
     assert runtime.budget_controller.max_tool_calls == 8
     assert runtime.budget_controller.max_state_tool_calls == 9
@@ -132,6 +143,34 @@ skills:
     assert runtime.budget_controller.max_high_risk_tool_calls == 12
     assert runtime.budget_controller.max_seconds == 13
     assert runtime.llm_client.model_name == "configured-active"
+
+
+def test_build_runtime_uses_configured_loaded_tools_in_initial_state(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "agent.config.yaml"
+    config_path.write_text(
+        """
+runtime:
+  loaded_tools:
+    - file_read
+    - grep
+    - find_symbol
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(bootstrap_module, "create_model_loader", lambda **_: _FakeLoader())
+
+    runtime = bootstrap_module.build_runtime(config_path=config_path)
+
+    async def _fake_continue(state, cancel_ev=None):
+      return state
+
+    monkeypatch.setattr(runtime, "_continue", _fake_continue)
+    state = asyncio.run(runtime.chat(user_id="u1", session_id="s1", message="hello"))
+
+    assert state.metadata["loaded_tools"] == ["file_read", "grep", "find_symbol"]
+    prompt = runtime.message_builder.build_system_prompt(state)
+    assert "file_read, grep, find_symbol" in prompt
 
 
 def test_build_runtime_workspace_argument_overrides_config(monkeypatch, tmp_path: Path) -> None:

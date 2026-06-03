@@ -121,6 +121,7 @@ class RuntimeConfig:
     temperature: float
     workspace_root: Path
     skill_roots: list[Path]
+    default_loaded_tool_names: list[str]
     short_memory_turns: int
     max_steps: int
     max_tool_calls: int
@@ -165,6 +166,10 @@ def load_runtime_config(config_path: str | Path | None = None) -> RuntimeConfig:
         temperature=_as_float(model_section.get("temperature", TEMPERATURE), label="model.temperature"),
         workspace_root=_as_path(workspace_value, base_dir=base_dir),
         skill_roots=_as_path_list(skill_roots_value, label="skills.roots", base_dir=base_dir),
+        default_loaded_tool_names=_as_str_list(
+            runtime_section.get("loaded_tools", DEFAULT_LOADED_TOOL_NAMES),
+            label="runtime.loaded_tools",
+        ),
         short_memory_turns=_as_int(runtime_section.get("short_memory_turns", SHORT_MEMORY_TURNS), label="runtime.short_memory_turns"),
         max_steps=_as_int(budget_section.get("max_steps", MAX_STEPS), label="budget.max_steps"),
         max_tool_calls=_as_int(budget_section.get("max_tool_calls", MAX_TOOL_CALLS), label="budget.max_tool_calls"),
@@ -218,6 +223,17 @@ def _as_path_list(value: object, *, label: str, base_dir: Path) -> list[Path]:
     if not isinstance(value, list):
         raise ValueError(f"{label} must be a list of paths")
     return [_as_path(item, base_dir=base_dir) for item in value]
+
+
+def _as_str_list(value: object, *, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{label} must be a list of strings")
+        items.append(item)
+    return items
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("agent_runtime")
