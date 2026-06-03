@@ -75,11 +75,53 @@ main.py
 
 ## 运行方式
 
+推荐先修改仓库根目录的 `agent.config.yaml`，再启动 CLI 或脚本。默认情况下，runtime 会自动读取这个文件；也可以通过环境变量 `AGENT_CONFIG=/path/to/agent.config.yaml` 指向其他配置文件。
+
 安装依赖：
 
 ```powershell
 uv sync
 ```
+
+最小启动步骤：
+
+1. 打开 `agent.config.yaml`
+2. 修改 `model.url`、`model.name`，必要时修改 `model.api_key`
+3. 如果你想限制 agent 可操作目录，修改 `runtime.workspace_root`
+4. 运行 `uv run agent` 或 `uv run python main.py chat "hello"`
+
+默认配置文件示例：
+
+```yaml
+model:
+     url: http://127.0.0.1:11434/v1
+     name: qwen3
+     api_key: EMPTY
+     temperature: 0.5
+
+runtime:
+     workspace_root: ./runtime_data/workspace
+     short_memory_turns: 8
+
+budget:
+     max_steps: 20
+     max_tool_calls: 20
+     max_state_tool_calls: 120
+     max_read_tool_calls: 120
+     max_network_tool_calls: 30
+     max_high_risk_tool_calls: 20
+     max_seconds: 160
+
+skills:
+     roots:
+          - ./skills
+```
+
+说明：
+
+- `agent.config.yaml` 中的相对路径按配置文件所在目录解析，不依赖当前 shell 的工作目录。
+- CLI 默认 provider 是 `openai_compatible`，因此只要模型端点兼容 OpenAI 接口，通常只改这个 YAML 就能跑。
+- 如果你切换到云 provider，仍然需要补充对应环境变量，例如 `QWEN_API_KEY`、`DEEPSEEK_API_KEY`。
 
 运行一次聊天：
 
@@ -133,11 +175,27 @@ uv run python main.py show-memory --user-id demo-user
 
 ## 配置
 
-主要配置在 `packages/runtime/config.py` 和 `.env` 中。
+Phase 5 起，推荐把仓库根目录的 `agent.config.yaml` 作为主配置入口；`packages/runtime/config.py` 仍然保留默认值和常量定义，但日常使用优先改 YAML。
+
+当前支持这些配置段：
+
+- `model.url` / `model.name` / `model.api_key` / `model.temperature`
+- `runtime.workspace_root` / `runtime.short_memory_turns`
+- `budget.max_steps` / `budget.max_tool_calls` / `budget.max_state_tool_calls`
+- `budget.max_read_tool_calls` / `budget.max_network_tool_calls` / `budget.max_high_risk_tool_calls` / `budget.max_seconds`
+- `skills.roots`
+
+如果你需要针对不同机器维护不同配置，有两种方式：
+
+- 直接在仓库根目录修改 `agent.config.yaml`
+- 使用 `AGENT_CONFIG` 指向另一份配置文件
+
+对开发者来说，`build_runtime()` 和 `build_llm()` 现在都支持 `config_path` 参数，可以显式指定配置文件路径。
 
 常用环境变量：
 
 - `AGENT_WORKSPACE`：agent 可操作的工作目录，默认是 `./runtime_data/workspace`。
+- `AGENT_CONFIG`：指定要加载的 `agent.config.yaml` 路径。
 - `LOCAL_MODEL_URL`：本地 OpenAI-compatible 模型地址。
 - `LOCAL_MODEL_NAME`：本地模型名称。
 - `LOCAL_MODEL_API_KEY`：本地模型 API key。
@@ -253,7 +311,7 @@ user message
 
 安全策略：
 
-- 工作区路径必须限制在 `AGENT_WORKSPACE` 内。
+- 工作区路径必须限制在 `runtime.workspace_root` 指定目录内；未显式配置时默认等价于 `AGENT_WORKSPACE` / `./runtime_data/workspace`。
 - 写操作必须通过审批策略。
 - bash 默认高风险，必须审批。
 - plan mode 开启后，executor 会阻断写文件、bash、网络等副作用工具，只允许继续规划、读取上下文或退出 plan mode。
