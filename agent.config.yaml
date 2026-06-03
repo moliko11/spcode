@@ -1,0 +1,22 @@
+model:
+  url: http://10.8.160.47:9998/v1
+  name: qwen3
+  api_key: EMPTY
+  temperature: 0.5
+
+runtime:
+  workspace_root: ./runtime_data/workspace
+  short_memory_turns: 8
+
+budget:
+  max_steps: 20
+  max_tool_calls: 20
+  max_state_tool_calls: 120
+  max_read_tool_calls: 120
+  max_network_tool_calls: 30
+  max_high_risk_tool_calls: 20
+  max_seconds: 160
+
+skills:
+  roots:
+    - ./skills

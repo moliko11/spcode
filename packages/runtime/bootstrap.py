@@ -46,28 +46,15 @@ from packages.memory.store import FileMemoryStore
 from packages.memory.summarizer import TranscriptSummarizer
 from packages.memory.compaction import CompactionPipeline
 from .config import (
-    API_KEY,
     CHECKPOINT_DIR,
-    MAX_SECONDS,
-    MAX_HIGH_RISK_TOOL_CALLS,
-    MAX_NETWORK_TOOL_CALLS,
-    MAX_READ_TOOL_CALLS,
-    MAX_STEPS,
-    MAX_STATE_TOOL_CALLS,
-    MAX_TOOL_CALLS,
     MEMORY_TRANSCRIPTS_DIR,
     MEMORY_USERS_DIR,
-    MODEL_NAME,
-    MODEL_URL,
     PLAN_RUNS_DIR,
     PLANS_DIR,
     SESSION_DIR,
-    SHORT_MEMORY_TURNS,
-    TEMPERATURE,
     TOOL_CATALOG,
     WORKFLOWS_DIR,
-    WORKSPACE_DIR,
-    SKILL_ROOTS,
+    load_runtime_config,
 )
 from .events import AuditSubscriber, EventBus, LoggingSubscriber
 from .executor import ToolExecutor
@@ -123,7 +110,7 @@ class ListDirTool:
     """
     列出目录工具
     """
-    def __init__(self, workspace_root: str | Path = WORKSPACE_DIR) -> None:
+    def __init__(self, workspace_root: str | Path) -> None:
         self.workspace_root = Path(workspace_root).resolve()
 
     async def arun(self, arguments: dict[str, Any]) -> str:
@@ -141,6 +128,7 @@ class ListDirTool:
 
 def build_runtime(
     workspace_root: str | Path | None = None,
+    config_path: str | Path | None = None,
     max_tool_calls: int | None = None,
     max_state_tool_calls: int | None = None,
     max_read_tool_calls: int | None = None,
@@ -149,17 +137,19 @@ def build_runtime(
     enable_event_logging: bool | None = None,
 ) -> AgentRuntime:
     ensure_dirs()
-    workspace_dir = Path(workspace_root).resolve() if workspace_root is not None else WORKSPACE_DIR.resolve()
+    runtime_config = load_runtime_config(config_path)
+    workspace_dir = Path(workspace_root).resolve() if workspace_root is not None else runtime_config.workspace_root.resolve()
+    skill_roots = [Path(root).resolve() for root in runtime_config.skill_roots]
     if enable_event_logging is None:
         enable_event_logging = os.getenv("AGENT_EVENT_STDOUT", "0").lower() in {"1", "true", "yes", "on"}
     loader = create_model_loader(
-        model_url=MODEL_URL,
-        model_name=MODEL_NAME,
-        api_key=API_KEY,
-        temperature=TEMPERATURE,
+        model_url=runtime_config.model_url,
+        model_name=runtime_config.model_name,
+        api_key=runtime_config.api_key,
+        temperature=runtime_config.temperature,
     )
     llm = loader.load()
-    active_model_name = getattr(loader, "active_model_name", MODEL_NAME) or MODEL_NAME
+    active_model_name = getattr(loader, "active_model_name", runtime_config.model_name) or runtime_config.model_name
 
     registry = ToolRegistry()
     registry.register(
@@ -474,7 +464,7 @@ def build_runtime(
             category="workspace",
             sandbox_required=True,
         ),
-        CoreFileReadTool(workspace_root=workspace_dir, extra_roots=SKILL_ROOTS),
+        CoreFileReadTool(workspace_root=workspace_dir, extra_roots=skill_roots),
     )
     registry.register(
         ToolSpec(
@@ -655,7 +645,7 @@ def build_runtime(
             category="meta",
             sandbox_required=True,
         ),
-        CoreSkillTool(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS),
+        CoreSkillTool(workspace_root=workspace_dir, skill_roots=skill_roots),
     )
     registry.register(
         ToolSpec(
@@ -807,7 +797,7 @@ def build_runtime(
     if enable_event_logging:
         event_bus.subscribe(LoggingSubscriber())
     event_bus.subscribe(AuditSubscriber())
-    guardrail_engine = GuardrailEngine(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS)
+    guardrail_engine = GuardrailEngine(workspace_root=workspace_dir, skill_roots=skill_roots)
     idempotency_store = IdempotencyStore()
     tool_executor = ToolExecutor(
         registry=registry,
@@ -819,11 +809,11 @@ def build_runtime(
         event_bus=event_bus,
     )
     # Build a shared SkillTool instance so MessageBuilder can inject skill listings
-    skill_tool_instance = CoreSkillTool(workspace_root=workspace_dir, skill_roots=SKILL_ROOTS)
+    skill_tool_instance = CoreSkillTool(workspace_root=workspace_dir, skill_roots=skill_roots)
     runtime = AgentRuntime(
         llm_client=NativeToolCallingLLMClient(llm=llm, model_name=active_model_name),
         message_builder=MessageBuilder(
-            short_memory_turns=SHORT_MEMORY_TURNS,
+            short_memory_turns=runtime_config.short_memory_turns,
             skill_tool=skill_tool_instance,
             workspace_root=workspace_dir,
         ),
@@ -834,13 +824,13 @@ def build_runtime(
         event_bus=event_bus,
         guardrail_engine=guardrail_engine,
         budget_controller=BudgetController(
-            max_steps=MAX_STEPS,
-            max_tool_calls=max_tool_calls if max_tool_calls is not None else MAX_TOOL_CALLS,
-            max_seconds=MAX_SECONDS,
-            max_state_tool_calls=max_state_tool_calls if max_state_tool_calls is not None else MAX_STATE_TOOL_CALLS,
-            max_read_tool_calls=max_read_tool_calls if max_read_tool_calls is not None else MAX_READ_TOOL_CALLS,
-            max_network_tool_calls=max_network_tool_calls if max_network_tool_calls is not None else MAX_NETWORK_TOOL_CALLS,
-            max_high_risk_tool_calls=max_high_risk_tool_calls if max_high_risk_tool_calls is not None else MAX_HIGH_RISK_TOOL_CALLS,
+            max_steps=runtime_config.max_steps,
+            max_tool_calls=max_tool_calls if max_tool_calls is not None else runtime_config.max_tool_calls,
+            max_seconds=runtime_config.max_seconds,
+            max_state_tool_calls=max_state_tool_calls if max_state_tool_calls is not None else runtime_config.max_state_tool_calls,
+            max_read_tool_calls=max_read_tool_calls if max_read_tool_calls is not None else runtime_config.max_read_tool_calls,
+            max_network_tool_calls=max_network_tool_calls if max_network_tool_calls is not None else runtime_config.max_network_tool_calls,
+            max_high_risk_tool_calls=max_high_risk_tool_calls if max_high_risk_tool_calls is not None else runtime_config.max_high_risk_tool_calls,
         ),
         idempotency_store=idempotency_store,
     )
@@ -855,13 +845,14 @@ def build_runtime(
     return runtime
 
 
-def build_llm() -> BaseChatModel:
+def build_llm(config_path: str | Path | None = None) -> BaseChatModel:
     """仅创建并返回 LLM 实例，供不需要完整 runtime 的场景使用（如 Planner）。"""
     from langchain_core.language_models import BaseChatModel  # noqa: F401 (type hint only)
+    runtime_config = load_runtime_config(config_path)
     loader = create_model_loader(
-        model_url=MODEL_URL,
-        model_name=MODEL_NAME,
-        api_key=API_KEY,
-        temperature=TEMPERATURE,
+        model_url=runtime_config.model_url,
+        model_name=runtime_config.model_name,
+        api_key=runtime_config.api_key,
+        temperature=runtime_config.temperature,
     )
     return loader.load()

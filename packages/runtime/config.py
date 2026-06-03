@@ -3,7 +3,10 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 MODEL_URL = "http://10.8.160.47:9998/v1"
 MODEL_NAME = "qwen3"
@@ -12,6 +15,7 @@ TEMPERATURE = 0.5
 
 # Project root: packages/runtime/ -> packages/ -> project root
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "agent.config.yaml"
 # Skills root: configurable via AGENT_SKILLS_DIR env var; defaults to PROJECT_ROOT/skills/
 # In production, point this to a directory outside the source tree to avoid committing secrets.
 _skills_env = os.getenv("AGENT_SKILLS_DIR")
@@ -107,6 +111,113 @@ TOOL_CATALOG = [
     {"name": "git_log", "description": "Show git commit history to understand code evolution.", "category": "code", "tags": ["git", "log", "history", "commits"], "default_loaded": True, "requires_approval": False},
     {"name": "find_symbol", "description": "Find class, function, or variable definitions in Python files using AST.", "category": "code", "tags": ["ast", "symbol", "navigate", "definition"], "default_loaded": True, "requires_approval": False},
 ]
+
+
+@dataclass(slots=True)
+class RuntimeConfig:
+    model_url: str
+    model_name: str
+    api_key: str
+    temperature: float
+    workspace_root: Path
+    skill_roots: list[Path]
+    short_memory_turns: int
+    max_steps: int
+    max_tool_calls: int
+    max_state_tool_calls: int
+    max_read_tool_calls: int
+    max_network_tool_calls: int
+    max_high_risk_tool_calls: int
+    max_seconds: int
+    source_path: Path | None = None
+
+
+def resolve_runtime_config_path(config_path: str | Path | None = None) -> Path:
+    env_path = os.getenv("AGENT_CONFIG")
+    candidate = config_path or env_path or DEFAULT_CONFIG_PATH
+    return Path(candidate).resolve()
+
+
+def load_runtime_config(config_path: str | Path | None = None) -> RuntimeConfig:
+    path = resolve_runtime_config_path(config_path)
+    raw: dict[str, object] = {}
+    source_path: Path | None = None
+    if path.exists():
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict):
+            raise ValueError("agent config must be a mapping at the top level")
+        raw = payload
+        source_path = path
+    base_dir = source_path.parent if source_path is not None else PROJECT_ROOT
+
+    model_section = _mapping(raw.get("model"), label="model")
+    runtime_section = _mapping(raw.get("runtime"), label="runtime")
+    budget_section = _mapping(raw.get("budget"), label="budget")
+    skills_section = _mapping(raw.get("skills"), label="skills")
+
+    workspace_value = runtime_section.get("workspace_root", WORKSPACE_DIR)
+    skill_roots_value = skills_section.get("roots", SKILL_ROOTS)
+
+    return RuntimeConfig(
+        model_url=_as_str(model_section.get("url", MODEL_URL), label="model.url"),
+        model_name=_as_str(model_section.get("name", MODEL_NAME), label="model.name"),
+        api_key=_as_str(model_section.get("api_key", API_KEY), label="model.api_key"),
+        temperature=_as_float(model_section.get("temperature", TEMPERATURE), label="model.temperature"),
+        workspace_root=_as_path(workspace_value, base_dir=base_dir),
+        skill_roots=_as_path_list(skill_roots_value, label="skills.roots", base_dir=base_dir),
+        short_memory_turns=_as_int(runtime_section.get("short_memory_turns", SHORT_MEMORY_TURNS), label="runtime.short_memory_turns"),
+        max_steps=_as_int(budget_section.get("max_steps", MAX_STEPS), label="budget.max_steps"),
+        max_tool_calls=_as_int(budget_section.get("max_tool_calls", MAX_TOOL_CALLS), label="budget.max_tool_calls"),
+        max_state_tool_calls=_as_int(budget_section.get("max_state_tool_calls", MAX_STATE_TOOL_CALLS), label="budget.max_state_tool_calls"),
+        max_read_tool_calls=_as_int(budget_section.get("max_read_tool_calls", MAX_READ_TOOL_CALLS), label="budget.max_read_tool_calls"),
+        max_network_tool_calls=_as_int(budget_section.get("max_network_tool_calls", MAX_NETWORK_TOOL_CALLS), label="budget.max_network_tool_calls"),
+        max_high_risk_tool_calls=_as_int(budget_section.get("max_high_risk_tool_calls", MAX_HIGH_RISK_TOOL_CALLS), label="budget.max_high_risk_tool_calls"),
+        max_seconds=_as_int(budget_section.get("max_seconds", MAX_SECONDS), label="budget.max_seconds"),
+        source_path=source_path,
+    )
+
+
+def _mapping(value: object, *, label: str) -> dict[str, object]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a mapping")
+    return value
+
+
+def _as_str(value: object, *, label: str) -> str:
+    if isinstance(value, str):
+        return value
+    raise ValueError(f"{label} must be a string")
+
+
+def _as_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _as_float(value: object, *, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number")
+    return float(value)
+
+
+def _as_path(value: object, *, base_dir: Path) -> Path:
+    if isinstance(value, Path):
+        return value.resolve() if value.is_absolute() else (base_dir / value).resolve()
+    if isinstance(value, str):
+        candidate = Path(os.path.expanduser(os.path.expandvars(value)))
+        return candidate.resolve() if candidate.is_absolute() else (base_dir / candidate).resolve()
+    raise ValueError("path values must be strings")
+
+
+def _as_path_list(value: object, *, label: str, base_dir: Path) -> list[Path]:
+    if isinstance(value, (str, Path)):
+        return [_as_path(value, base_dir=base_dir)]
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list of paths")
+    return [_as_path(item, base_dir=base_dir) for item in value]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("agent_runtime")
