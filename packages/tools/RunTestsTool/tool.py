@@ -32,15 +32,20 @@ class RunTestsTool:
         if extra_args:
             cmd_parts.extend(shlex.split(extra_args))
 
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_parts,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(self.workspace_root),
+        )
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd_parts,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(self.workspace_root),
-            )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await proc.communicate()
+            except Exception:
+                pass
             return f"[run_tests] timed out after {timeout}s"
 
         output = stdout.decode(errors="replace").strip()

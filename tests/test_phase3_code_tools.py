@@ -41,7 +41,8 @@ async def test_run_tests_timeout_returns_message(tmp_path: Path, monkeypatch) ->
 
     original = _asyncio.wait_for
 
-    async def _raise(*args, **kwargs):
+    async def _raise(coro, *args, **kwargs):
+        coro.close()
         raise _asyncio.TimeoutError()
 
     monkeypatch.setattr(_asyncio, "wait_for", _raise)
