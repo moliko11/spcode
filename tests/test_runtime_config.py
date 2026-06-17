@@ -231,3 +231,52 @@ model:
         "api_key": "planner-key",
         "temperature": 0.75,
     }
+
+
+def test_build_system_prompt_falls_back_when_loaded_tools_missing_or_none(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """回归: state.metadata 没有 loaded_tools 键、或显式存了 None 时，
+    build_system_prompt 应该走 runtime 配置的默认列表，而不是崩溃。"""
+    from packages.runtime.models import AgentState, Phase, RunStatus
+
+    config_path = tmp_path / "agent.config.yaml"
+    config_path.write_text(
+        """
+runtime:
+  loaded_tools:
+    - file_read
+    - grep
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bootstrap_module, "create_model_loader", lambda **_: _FakeLoader())
+    runtime = bootstrap_module.build_runtime(config_path=config_path)
+
+    def _make_state(metadata: dict) -> AgentState:
+        return AgentState(
+            run_id="r",
+            user_id="u",
+            task="t",
+            session_id="s",
+            status=RunStatus.RUNNING,
+            phase=Phase.DECIDING,
+            conversation=[],
+            metadata=metadata,
+        )
+
+    # 场景 A: 键缺失（老 checkpoint resume 路径）
+    prompt_missing = runtime.message_builder.build_system_prompt(_make_state({}))
+    assert "file_read, grep" in prompt_missing
+
+    # 场景 B: 显式 None（曾经能让 dict.get 默认值失效并 TypeError）
+    prompt_none = runtime.message_builder.build_system_prompt(
+        _make_state({"loaded_tools": None})
+    )
+    assert "file_read, grep" in prompt_none
+
+    # 场景 C: 空 list 也走 fallback，不留个空字段在 prompt 里
+    prompt_empty = runtime.message_builder.build_system_prompt(
+        _make_state({"loaded_tools": []})
+    )
+    assert "file_read, grep" in prompt_empty

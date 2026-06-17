@@ -33,7 +33,10 @@ class MessageBuilder:
         )
 
     def build_system_prompt(self, state: AgentState) -> str:
-        loaded_tools = state.metadata.get("loaded_tools", self.default_loaded_tool_names)
+        loaded_tools = state.metadata.get("loaded_tools")
+        if not loaded_tools:
+            # 兜底覆盖三种情况：键缺失（老 checkpoint）、显式 None、空 list
+            loaded_tools = self.default_loaded_tool_names
         loaded = ", ".join(str(name) for name in loaded_tools)
         dynamic = ", ".join(DYNAMIC_TOOL_NAMES)
         current_dt = self._current_datetime_text()
