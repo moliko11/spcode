@@ -1,0 +1,51 @@
+# 复制为 agent.config.yaml 后改成你自己的本地配置。
+# 不要把 agent.config.yaml 提交到仓库（已经在 .gitignore 里）。
+#
+# 也可以用环境变量 AGENT_CONFIG=/path/to/somewhere.yaml 指向其他文件。
+
+model:
+  url: http://127.0.0.1:11434/v1   # 本地 Ollama / vLLM / LM Studio 等 OpenAI-compatible 端点
+  name: qwen3
+  api_key: EMPTY                    # 真实 key 不要写在这里。改用环境变量或 secrets manager
+  temperature: 0.5
+
+runtime:
+  workspace_root: ./runtime_data/workspace
+  short_memory_turns: 8
+  # agent 启动时已加载的工具白名单。其他工具仍可通过 tool_search 动态加载。
+  loaded_tools:
+    - get_current_time
+    - calculator
+    - enter_plan_mode
+    - exit_plan_mode
+    - file_read
+    - file_write
+    - file_edit
+    - glob
+    - grep
+    - list_dir
+    - web_search
+    - web_fetch
+    - bash
+    - tool_search
+    - todo_write
+    - skill
+    # 下面 5 个是 Phase 3 代码工具，做通用 chat 时可以注释掉减小 prompt
+    - run_tests
+    - lint
+    - git_diff
+    - git_log
+    - find_symbol
+
+budget:
+  max_steps: 20
+  max_tool_calls: 20
+  max_state_tool_calls: 120
+  max_read_tool_calls: 120
+  max_network_tool_calls: 30
+  max_high_risk_tool_calls: 20
+  max_seconds: 160
+
+skills:
+  roots:
+    - ./skills

@@ -15,3 +15,10 @@ runtime_data/
 docs/*
 !docs/
 !docs/WEB_AND_CLI_IMPLEMENTATION_RESEARCH.md
+
+# Local agent config — copy from agent.config.yaml.example
+agent.config.yaml
+log.txt
+.upstream_diff.txt
+.worktree_diff.txt
+code-review.md
