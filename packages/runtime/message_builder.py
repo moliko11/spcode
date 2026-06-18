@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 
 class MessageBuilder:
+    """根据 AgentState 构建 LLM 输入消息列表，包括 system prompt 和近期对话历史。
+    system prompt 由 PromptSelector 组装，包含 base + specialist overlay，以及工具列表和自治政策等动态信息。
+    """
     def __init__(
         self,
         short_memory_turns: int = SHORT_MEMORY_TURNS,

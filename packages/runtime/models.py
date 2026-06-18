@@ -70,27 +70,27 @@ class EventType(str, enum.Enum):
     """
     事件类型（旧枚举，保留用于向后兼容；新代码请使用 EventKind）
     """
-    RUN_STARTED = "run_started"
-    RUN_RESUMED = "run_resumed"
-    STEP_STARTED = "step_started"
-    MODEL_OUTPUT = "model_output"
-    TOOL_SELECTED = "tool_selected"
-    TOOL_STARTED = "tool_started"
-    TOOL_FINISHED = "tool_finished"
-    TOOL_FAILED = "tool_failed"
-    HUMAN_REQUIRED = "human_required"
-    HUMAN_APPROVED = "human_approved"
-    HUMAN_REJECTED = "human_rejected"
-    STEP_FINISHED = "step_finished"
-    CHECKPOINT_SAVED = "checkpoint_saved"
-    RUN_COMPLETED = "run_completed"
-    RUN_DEGRADED = "run_degraded"
-    RUN_FAILED = "run_failed"
-    CONTEXT_SNIPPED = "context_snipped"
-    MICROCOMPACT_APPLIED = "microcompact_applied"
-    MEMORY_RECALLED = "memory_recalled"
-    MEMORY_STORED = "memory_stored"
-    AUTOCOMPACT_APPLIED = "autocompact_applied"
+    RUN_STARTED = "run_started" #开始运行
+    RUN_RESUMED = "run_resumed" #恢复运行
+    STEP_STARTED = "step_started"#步骤开始
+    MODEL_OUTPUT = "model_output" #模型输出
+    TOOL_SELECTED = "tool_selected" #工具选择
+    TOOL_STARTED = "tool_started"#工具开始
+    TOOL_FINISHED = "tool_finished" #工具完成
+    TOOL_FAILED = "tool_failed" #工具失败
+    HUMAN_REQUIRED = "human_required"#人工干预需要
+    HUMAN_APPROVED = "human_approved"#人工干预批准
+    HUMAN_REJECTED = "human_rejected"#人工干预拒绝
+    STEP_FINISHED = "step_finished"#步骤完成
+    CHECKPOINT_SAVED = "checkpoint_saved"#检查点保存
+    RUN_COMPLETED = "run_completed"#运行完成
+    RUN_DEGRADED = "run_degraded"#运行降级
+    RUN_FAILED = "run_failed"#运行失败
+    CONTEXT_SNIPPED = "context_snipped"#上下文截断
+    MICROCOMPACT_APPLIED = "microcompact_applied"#微压缩应用
+    MEMORY_RECALLED = "memory_recalled"#记忆召回
+    MEMORY_STORED = "memory_stored"#记忆存储
+    AUTOCOMPACT_APPLIED = "autocompact_applied"#自动压缩应用
 
 
 class EventKind(str, enum.Enum):

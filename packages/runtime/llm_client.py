@@ -10,18 +10,26 @@ from .models import safe_json_dumps
 
 
 class NativeToolCallingLLMClient:
+    """封装原生支持工具调用的 LLM 对象，提供统一接口供 AgentRuntime 调用。"""
     def __init__(self, llm: Any, model_name: str) -> None:
         self.model_name = model_name
         self.raw_llm = llm
         self._bound_cache: dict[str, Any] = {}
 
     def _bind_tools(self, llm: Any, tool_schemas: list[dict[str, Any]]) -> Any:
+        """将工具 schema 绑定到 LLM 对象上，返回新的 LLM 对象。"""
         if hasattr(llm, "bind_tools"):
+            """
+            如果底层 LLM 对象支持 bind_tools 方法，则直接调用。这个方法应该返回一个新的 LLM 对象，该对象在调用时会自动处理工具调用逻辑。
+            """
             return llm.bind_tools(tool_schemas)
         raise RuntimeError("current llm object does not support bind_tools")
 
     async def invoke(self, messages: list[Any], tool_schemas: list[dict[str, Any]]) -> Any:
+        """调用 LLM 获取响应，返回完整响应对象。"""
+       
         cache_key = safe_json_dumps(tool_schemas)
+        """safe_json_dumps 是一个将工具 schema 列表转换为 JSON 字符串的函数，用于生成缓存键。"""
         bound_llm = self._bound_cache.get(cache_key)
         if bound_llm is None:
             bound_llm = self._bind_tools(self.raw_llm, tool_schemas)

@@ -67,6 +67,11 @@ from .registry import ToolRegistry
 from .store import FileCheckpointStore, FileSessionStore, ensure_dirs
 
 
+
+"""
+这个模块负责引导和组装 AgentRuntime 实例，包含以下核心组件：
+"""
+
 class GetCurrentTimeTool:
     """
     获取当前时间工具

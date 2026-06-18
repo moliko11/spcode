@@ -9,9 +9,9 @@ from .models import AgentState, Phase, RunStatus, SessionMessage, StepRecord, To
 
 
 def _safe_id(value: str, label: str = "id") -> str:
-    """Validate that an ID only contains safe filename characters.
-    Raises ValueError on path traversal or invalid characters.
-    Allowed: A-Za-z0-9 _ . -
+    """验证标识符仅包含安全文件名字符。
+若存在路径穿越行为或非法字符，则抛出ValueError异常。
+允许的（字符）: A-Za-z0-9 _ . -
     """
     if not re.fullmatch(r"[A-Za-z0-9_.\-]+", value):
         raise ValueError(f"Invalid {label}: {value!r} — only A-Za-z0-9_.- allowed")

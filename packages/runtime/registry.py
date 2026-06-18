@@ -22,25 +22,39 @@ class ToolRegistry:
         self._tools: dict[str, BaseTool] = {}
 
     def register(self, spec: ToolSpec, tool: BaseTool) -> None:
+        """
+        注册工具及其规范
+        """
         self._specs[spec.name] = spec
         self._tools[spec.name] = tool
 
     def get_spec(self, name: str) -> ToolSpec:
+        """
+        获取工具规范
+        """
         spec = self._specs.get(name)
         if spec is None:
             raise ValueError(f"unknown tool spec: {name}")
         return spec
 
     def get_tool(self, name: str) -> BaseTool:
+        """
+        获取工具实现
+        """
         tool = self._tools.get(name)
         if tool is None:
             raise ValueError(f"unknown tool implementation: {name}")
         return tool
 
     def has_tool(self, name: str) -> bool:
+        """检查是否注册了指定名称的工具
+        """
         return name in self._tools
 
     def openai_tools(self, names: list[str] | None = None) -> list[dict[str, Any]]:
+        """生成符合 OpenAI function calling 规范的工具列表，供 LLM 调用时使用。
+        如果 names 参数非空，则只返回指定名称的工具；否则返回所有工具。
+        """
         allowed = set(names) if names is not None else None
         tools = []
         for spec in self._specs.values():
